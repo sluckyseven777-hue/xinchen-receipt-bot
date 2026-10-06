@@ -48,7 +48,7 @@ if (!APPS_SCRIPT_URL) {
  * CONFIG
  ******************************************************************/
 
-const VERSION = 'XINCHEN RECEIPT BOT V1.1 STABLE';
+const VERSION = 'XINCHEN RECEIPT BOT V1.2 STABLE';
 
 const CHANNELS = {
   '1536956205803503686': 'XINCHEN-SG',
@@ -966,92 +966,179 @@ async function getSummary(company) {
  * APPS SCRIPT
  ******************************************************************/
 
+/******************************************************************
+ * APPS SCRIPT
+ * V1.2 - STABLE REQUEST LAYER
+ ******************************************************************/
+
 async function callAppsScript(payload) {
 
-  const controller =
-    new AbortController();
+  const controller = new AbortController();
 
-  const timeout =
-    setTimeout(
-      () => controller.abort(),
-      25000
-    );
-
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 30000);
 
   try {
 
+    const appsUrl = String(APPS_SCRIPT_URL || '').trim();
+
+    if (!appsUrl) {
+      throw new Error('APPS_SCRIPT_URL is empty');
+    }
+
+    if (
+      !appsUrl.startsWith('https://script.google.com/macros/s/') ||
+      !appsUrl.endsWith('/exec')
+    ) {
+      throw new Error(
+        'APPS_SCRIPT_URL must be a Google Apps Script /exec URL'
+      );
+    }
+
     console.log(
-      '[APPS REQUEST]',
-      payload.action,
-      payload.company
+      `[APPS REQUEST] ${payload.action} ${payload.company || ''}`
     );
 
+    /*
+     * IMPORTANT:
+     *
+     * Apps Script Web App POST requests can redirect from
+     * script.google.com to script.googleusercontent.com.
+     *
+     * fetch() is allowed to follow the redirect automatically.
+     */
 
-    const response =
-      await fetch(
-        APPS_SCRIPT_URL,
-        {
-          method: 'POST',
+    const response = await fetch(appsUrl, {
+      method: 'POST',
 
-          headers: {
-            'Content-Type':
-              'text/plain;charset=utf-8'
-          },
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+        'Accept': 'application/json,text/plain,*/*'
+      },
 
-          body:
-            JSON.stringify(payload),
+      body: JSON.stringify(payload),
 
-          signal:
-            controller.signal,
+      redirect: 'follow',
 
-          redirect:
-            'follow'
-        }
-      );
+      signal: controller.signal
+    });
 
-
-    const raw =
-      await response.text();
-
+    const raw = await response.text();
 
     console.log(
       '[APPS HTTP STATUS]',
       response.status
     );
 
+    console.log(
+      '[APPS FINAL URL]',
+      response.url
+    );
+
+    console.log(
+      '[APPS CONTENT TYPE]',
+      response.headers.get('content-type') || ''
+    );
 
     console.log(
       '[APPS RAW RESPONSE]',
       raw.substring(0, 1500)
     );
 
+    /*
+     * HTTP ERROR
+     */
 
     if (!response.ok) {
 
       throw new Error(
-        `Apps Script HTTP ${response.status}`
+        `Apps Script HTTP ${response.status} | Final URL: ${response.url}`
       );
 
     }
 
+    /*
+     * Apps Script should return JSON.
+     *
+     * If Google returns an HTML error page,
+     * do not try to treat it as JSON.
+     */
+
+    const trimmed = raw.trim();
+
+    if (
+      trimmed.startsWith('<!DOCTYPE') ||
+      trimmed.startsWith('<html') ||
+      trimmed.startsWith('<HTML')
+    ) {
+
+      throw new Error(
+        `Apps Script returned HTML instead of JSON | Final URL: ${response.url}`
+      );
+
+    }
 
     let result;
 
     try {
 
-      result =
-        JSON.parse(raw);
+      result = JSON.parse(trimmed);
 
     } catch (error) {
 
+      console.error(
+        '[APPS JSON PARSE ERROR]',
+        error
+      );
+
       throw new Error(
-        'Apps Script returned invalid JSON'
+        `Apps Script returned invalid JSON | Final URL: ${response.url}`
       );
 
     }
 
+    /*
+     * Validate response
+     */
+
+    if (
+      !result ||
+      typeof result !== 'object'
+    ) {
+
+      throw new Error(
+        'Apps Script returned an invalid response object'
+      );
+
+    }
 
     return result;
+
+  } catch (error) {
+
+    if (error.name === 'AbortError') {
+
+      console.error(
+        '[APPS TIMEOUT]',
+        payload.action,
+        payload.company || ''
+      );
+
+      throw new Error(
+        'Apps Script request timed out'
+      );
+
+    }
+
+    console.error(
+      '[APPS REQUEST ERROR]',
+      payload.action,
+      payload.company || '',
+      error.message
+    );
+
+    throw error;
 
   } finally {
 
@@ -1060,7 +1147,6 @@ async function callAppsScript(payload) {
   }
 
 }
-
 
 /******************************************************************
  * PARSE AMOUNT
