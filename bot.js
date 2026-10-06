@@ -364,7 +364,7 @@ async function handleReceipt(
       await safeReply(
         message,
         [
-          `✅ **Receipt Confirmed | 已確認入款：RM ${formatMoney(amount)}**`,
+          `✅ **Receipt Confirmed | 已確認入款：${formatMoney(amount)}**`,
           '',
           `👤 ${reporter}`,
           '',
@@ -400,7 +400,7 @@ async function handleReceipt(
 
 
     console.log(
-      `[RECEIPT SUCCESS] ${company} RM ${formatMoney(amount)}`
+      `[RECEIPT SUCCESS] ${company} ${formatMoney(amount)}`
     );
 
 
@@ -607,7 +607,7 @@ async function handleVoid(
         [
           '⚠️ **Already Voided | 已經撤銷**',
           '',
-          `Amount | 金額：**RM ${formatMoney(result.amount)}**`,
+          `Amount | 金額：** ${formatMoney(result.amount)}**`,
           '',
           '這筆入款之前已經撤銷，不能重複撤銷。',
           'This receipt has already been voided.'
@@ -634,7 +634,7 @@ async function handleVoid(
       await safeReply(
         message,
         [
-          `♻️ **Voided Successfully | 已撤銷：RM ${formatMoney(result.amount)}**`,
+          `♻️ **Voided Successfully | 已撤銷：${formatMoney(result.amount)}**`,
           '',
           '撤銷已寫入，但今日統計暫時無法載入。',
           'Void recorded successfully, but the daily summary is temporarily unavailable.'
@@ -672,7 +672,7 @@ async function handleVoid(
 
 
     console.log(
-      `[VOID SUCCESS] ${company} RM ${formatMoney(result.amount)}`
+      `[VOID SUCCESS] ${company} ${formatMoney(result.amount)}`
     );
 
 
@@ -717,8 +717,8 @@ function buildSummaryEmbed({
 
   const title =
     isVoid
-      ? `♻️ 已撤銷入款：RM ${formatMoney(amount)} | Receipt Voided`
-      : `✅ 已確認入款：RM ${formatMoney(amount)} | Receipt Confirmed`;
+      ? `♻️ 已撤銷入款：${formatMoney(amount)} | Receipt Voided`
+      : `✅ 已確認入款：${formatMoney(amount)} | Receipt Confirmed`;
 
 
   const entries =
@@ -776,7 +776,7 @@ function buildSummaryEmbed({
 
 
       return (
-        `${time}  RM ${entryAmount}  (${entryReporter})`
+        `${time}  ${entryAmount}  (${entryReporter})`
       );
 
     });
@@ -827,7 +827,7 @@ function buildSummaryEmbed({
 
 
   description +=
-    `\n\n**Total | 總入款：RM ${formatMoney(summary.totalAmount)}**`;
+    `\n\n**Total | 總入款：${formatMoney(summary.totalAmount)}**`;
 
 
   description +=
