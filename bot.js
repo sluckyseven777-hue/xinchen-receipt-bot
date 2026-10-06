@@ -1180,18 +1180,134 @@ function buildSummaryEmbed({
  * GET SUMMARY
  ******************************************************************/
 
+/******************************************************************
+ * GET SUMMARY - STABLE RETRY
+ *
+ * 只重试 SUMMARY
+ * 绝对不会重新 ADD
+ *
+ * 第一次失败：
+ * 等 1 秒后再查
+ *
+ * 第二次失败：
+ * 交回上层显示
+ * "入款成功，但统计暂时无法显示"
+ ******************************************************************/
+
 async function getSummary(
   company
 ) {
 
-  return await callAppsScript({
+  const MAX_ATTEMPTS = 2;
 
-    action:
-      'SUMMARY',
+  for (
+    let attempt = 1;
+    attempt <= MAX_ATTEMPTS;
+    attempt++
+  ) {
 
-    company
+    try {
 
-  });
+      console.log(
+        `[SUMMARY ATTEMPT] ${company} ${attempt}/${MAX_ATTEMPTS}`
+      );
+
+
+      const result =
+        await callAppsScript({
+
+          action:
+            'SUMMARY',
+
+          company
+
+        });
+
+
+      if (
+        result &&
+        result.ok
+      ) {
+
+        console.log(
+          `[SUMMARY SUCCESS] ${company} attempt ${attempt}`
+        );
+
+        return result;
+
+      }
+
+
+      console.error(
+        `[SUMMARY INVALID] ${company} attempt ${attempt}`,
+        result
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        `[SUMMARY ATTEMPT FAILED] ${company} attempt ${attempt}`,
+        error.message
+      );
+
+    }
+
+
+    /**************************************************************
+     * 第一次失败才等待
+     **************************************************************/
+
+    if (
+      attempt <
+      MAX_ATTEMPTS
+    ) {
+
+      console.log(
+        `[SUMMARY RETRY] ${company} retrying in 1 second...`
+      );
+
+
+      await sleep(
+        1000
+      );
+
+    }
+
+  }
+
+
+  /**************************************************************
+   * 两次都失败
+   *
+   * 注意：
+   * 这里只代表 SUMMARY 失败。
+   * ADD 已经成功，不会重新 ADD。
+   **************************************************************/
+
+  console.error(
+    `[SUMMARY FAILED] ${company} after ${MAX_ATTEMPTS} attempts`
+  );
+
+
+  return null;
+
+}
+
+
+/******************************************************************
+ * SLEEP
+ ******************************************************************/
+
+function sleep(ms) {
+
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
 
 }
 
