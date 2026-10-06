@@ -1067,9 +1067,28 @@ function parseAmount(content) {
 
 
 /******************************************************************
- * DISPLAY NAME
+ * FORMAT MONEY
  ******************************************************************/
 
+function formatMoney(value) {
+
+  const amount = Number(value || 0);
+
+  if (!Number.isFinite(amount)) {
+    return '0.00';
+  }
+
+  return amount.toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
+}
+
+
+/******************************************************************
+ * DISPLAY NAME
+ ******************************************************************/
 function getDisplayName(message) {
 
   if (
