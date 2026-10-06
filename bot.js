@@ -1,18 +1,18 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V1.0
+ * XINCHEN RECEIPT BOT V1.1 STABLE
  * 鑫財團簡易加賬機器人
  *
- * SG  Channel: 1536956205803503686
- * IRL Channel: 1555181833816117359
+ * SG  : 1536956205803503686
+ * IRL : 1555181833816117359
  *
- * Functions:
- * - Pure amount receipt
+ * - Pure amount only
  * - SG / IRL separated
- * - Daily summary
- * - Reply + void/cancel/撤銷/撤销
- * - Ignore message edits
- * - Message ID dedupe handled by Apps Script
- * - Bilingual Chinese / English
+ * - No currency / no exchange rate
+ * - Daily business-date summary
+ * - Reply + void / cancel / 撤销 / 撤銷
+ * - Message edits ignored
+ * - Apps Script MessageID dedupe
+ * - Chinese / English
  * - Render health server
  ******************************************************************/
 
@@ -27,19 +27,19 @@ const {
 
 
 /******************************************************************
- * ENVIRONMENT VARIABLES
+ * ENV
  ******************************************************************/
 
 const TOKEN = process.env.TOKEN;
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
 if (!TOKEN) {
-  console.error('[BOOT ERROR] TOKEN is missing.');
+  console.error('[BOOT ERROR] TOKEN is missing');
   process.exit(1);
 }
 
 if (!APPS_SCRIPT_URL) {
-  console.error('[BOOT ERROR] APPS_SCRIPT_URL is missing.');
+  console.error('[BOOT ERROR] APPS_SCRIPT_URL is missing');
   process.exit(1);
 }
 
@@ -48,7 +48,7 @@ if (!APPS_SCRIPT_URL) {
  * CONFIG
  ******************************************************************/
 
-const VERSION = 'XINCHEN RECEIPT BOT V1.0';
+const VERSION = 'XINCHEN RECEIPT BOT V1.1 STABLE';
 
 const CHANNELS = {
   '1536956205803503686': 'XINCHEN-SG',
@@ -97,11 +97,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-
-  console.log(
-    `[HTTP] listening: ${PORT}`
-  );
-
+  console.log(`[HTTP] listening: ${PORT}`);
 });
 
 
@@ -111,13 +107,8 @@ server.listen(PORT, '0.0.0.0', () => {
 
 client.once(Events.ClientReady, readyClient => {
 
-  console.log(
-    `[BOOT] ${VERSION}`
-  );
-
-  console.log(
-    `[GATEWAY READY] ${readyClient.user.tag}`
-  );
+  console.log(`[BOOT] ${VERSION}`);
+  console.log(`[GATEWAY READY] ${readyClient.user.tag}`);
 
   console.log(
     '[CHANNEL] XINCHEN-SG : 1536956205803503686'
@@ -138,48 +129,39 @@ client.on(Events.MessageCreate, async message => {
 
   try {
 
-    // ============================================================
-    // Ignore bot / webhook messages
-    // ============================================================
-
+    // Ignore bots
     if (message.author.bot) {
       return;
     }
 
+    // Ignore webhooks
     if (message.webhookId) {
       return;
     }
 
-
-    // ============================================================
-    // Only SG / IRL receipt channels
-    // ============================================================
-
-    const company =
-      CHANNELS[message.channel.id];
+    // Only receipt channels
+    const company = CHANNELS[message.channel.id];
 
     if (!company) {
       return;
     }
 
-
-    const content =
-      String(message.content || '').trim();
-
+    const content = String(
+      message.content || ''
+    ).trim();
 
     if (!content) {
       return;
     }
-
 
     console.log(
       `[MESSAGE] ${company} | ${message.author.tag} | ${content}`
     );
 
 
-    // ============================================================
-    // VOID COMMAND
-    // ============================================================
+    /**************************************************************
+     * VOID
+     **************************************************************/
 
     if (
       VOID_WORDS.has(
@@ -196,35 +178,16 @@ client.on(Events.MessageCreate, async message => {
     }
 
 
-    // ============================================================
-    // PURE AMOUNT ONLY
-    //
-    // Accepted:
-    // 168
-    // 168.3
-    // 168.38
-    // 1,688
-    // 1,688.38
-    //
-    // Rejected:
-    // +168
-    // RM168
-    // 168 abc
-    // 168.999
-    // multi-line
-    // ============================================================
+    /**************************************************************
+     * PURE AMOUNT
+     **************************************************************/
 
-    const amount =
-      parseAmount(content);
+    const amount = parseAmount(content);
 
-
+    // 普通聊天直接忽略
     if (amount === null) {
-
-      // 非金額聊天不回覆、不記錄
       return;
-
     }
-
 
     await handleReceipt(
       message,
@@ -232,12 +195,11 @@ client.on(Events.MessageCreate, async message => {
       amount
     );
 
-
-  } catch (err) {
+  } catch (error) {
 
     console.error(
       '[MESSAGE ERROR]',
-      err
+      error
     );
 
   }
@@ -246,14 +208,14 @@ client.on(Events.MessageCreate, async message => {
 
 
 /******************************************************************
- * IMPORTANT:
- * 沒有 MessageUpdate listener
+ * IMPORTANT
  *
- * 所以：
- * 原本 100
+ * 沒有 MessageUpdate listener。
+ *
+ * 100
  * Edit -> 9999
  *
- * Google Sheet 仍然保持 100。
+ * 不會重新入帳。
  *
  * 必須 VOID 後重新報數。
  ******************************************************************/
@@ -269,11 +231,11 @@ async function handleReceipt(
   amount
 ) {
 
+  const reporter = getDisplayName(message);
+
+  let addResult = null;
+
   try {
-
-    const reporter =
-      getDisplayName(message);
-
 
     console.log(
       '[RECEIPT]',
@@ -286,42 +248,47 @@ async function handleReceipt(
     );
 
 
-    // ============================================================
-    // ADD TO GOOGLE SHEET
-    // ============================================================
+    /**************************************************************
+     * ADD
+     **************************************************************/
 
-    const result =
-      await callAppsScript({
+    addResult = await callAppsScript({
 
-        action: 'ADD',
+      action: 'ADD',
 
-        company,
+      company,
 
-        amount,
+      amount,
 
-        reporter,
+      reporter,
 
-        discordId:
-          message.author.id,
+      discordId:
+        message.author.id,
 
-        messageId:
-          message.id
+      messageId:
+        message.id
 
-      });
-
+    });
 
     console.log(
       '[ADD RESULT]',
-      result
+      addResult
     );
 
 
-    if (!result || !result.ok) {
+    /**************************************************************
+     * ADD FAILED
+     **************************************************************/
+
+    if (
+      !addResult ||
+      !addResult.ok
+    ) {
 
       await safeReply(
         message,
         [
-          '⚠️ **Receipt failed | 入款記錄失敗**',
+          '⚠️ **Receipt Failed | 入款記錄失敗**',
           '',
           '系統暫時無法完成記錄，請稍後再試。',
           'The system could not record this receipt. Please try again later.'
@@ -332,11 +299,11 @@ async function handleReceipt(
     }
 
 
-    // ============================================================
-    // DUPLICATE
-    // ============================================================
+    /**************************************************************
+     * DUPLICATE
+     **************************************************************/
 
-    if (result.duplicate) {
+    if (addResult.duplicate) {
 
       console.log(
         `[DUPLICATE] ${message.id}`
@@ -346,27 +313,44 @@ async function handleReceipt(
     }
 
 
-    // ============================================================
-    // GET UPDATED SUMMARY
-    // ============================================================
+    /**************************************************************
+     * ADD IS NOW CONFIRMED
+     *
+     * 從這裡開始，就算 Summary 壞掉，
+     * 都不能再告訴使用者「入款失敗」。
+     **************************************************************/
 
-    const summary =
-      await getSummary(company);
+    let summary = null;
 
+    try {
+
+      summary = await getSummary(company);
+
+    } catch (summaryError) {
+
+      console.error(
+        '[SUMMARY ERROR AFTER ADD]',
+        summaryError
+      );
+
+    }
+
+
+    /**************************************************************
+     * SUMMARY UNAVAILABLE
+     **************************************************************/
 
     if (
       !summary ||
       !summary.ok
     ) {
 
-      // ADD 已經成功。
-      // Summary 失敗不能跟使用者說入款失敗。
       await safeReply(
         message,
         [
-          `✅ **Receipt Confirmed | 已確認入款：${formatMoney(amount)}**`,
+          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
           '',
-          `👤 ${reporter}`,
+          `👤 **Reporter | 報數人：** ${reporter}`,
           '',
           '⚠️ 今日統計暫時無法載入。',
           'Daily summary is temporarily unavailable.'
@@ -377,12 +361,15 @@ async function handleReceipt(
     }
 
 
-    // ============================================================
-    // SEND RECEIPT SUMMARY
-    // ============================================================
+    /**************************************************************
+     * BUILD EMBED
+     **************************************************************/
 
-    const embed =
-      buildSummaryEmbed({
+    let embed;
+
+    try {
+
+      embed = buildSummaryEmbed({
         company,
         amount,
         reporter,
@@ -390,27 +377,92 @@ async function handleReceipt(
         titleType: 'ADD'
       });
 
+    } catch (embedError) {
 
-    await message.reply({
-      embeds: [embed],
-      allowedMentions: {
-        repliedUser: false
-      }
-    });
+      console.error(
+        '[EMBED BUILD ERROR]',
+        embedError
+      );
+
+      await safeReply(
+        message,
+        [
+          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
+          '',
+          `👤 **Reporter | 報數人：** ${reporter}`,
+          '',
+          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
+        ].join('\n')
+      );
+
+      return;
+    }
+
+
+    /**************************************************************
+     * SEND
+     **************************************************************/
+
+    try {
+
+      await message.reply({
+        embeds: [embed],
+        allowedMentions: {
+          repliedUser: false
+        }
+      });
+
+    } catch (replyError) {
+
+      console.error(
+        '[EMBED REPLY ERROR]',
+        replyError
+      );
+
+      // 入款已經成功，所以只做 fallback 顯示
+      await safeReply(
+        message,
+        [
+          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
+          '',
+          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
+        ].join('\n')
+      );
+
+    }
 
 
     console.log(
-      `[RECEIPT SUCCESS] ${company} ${formatMoney(amount)}`
+      `[RECEIPT SUCCESS] ${company} ${formatAmount(amount)}`
     );
 
-
-  } catch (err) {
+  } catch (error) {
 
     console.error(
       '[HANDLE RECEIPT ERROR]',
-      err
+      error
     );
 
+    // 如果 ADD 已經確認成功，
+    // 絕對不要說「入款失敗」
+    if (
+      addResult &&
+      addResult.ok &&
+      !addResult.duplicate
+    ) {
+
+      await safeReply(
+        message,
+        [
+          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
+          '',
+          '入款已經成功寫入，但顯示統計時發生錯誤。',
+          'Receipt was recorded successfully, but the summary could not be displayed.'
+        ].join('\n')
+      );
+
+      return;
+    }
 
     await safeReply(
       message,
@@ -438,9 +490,9 @@ async function handleVoid(
 
   try {
 
-    // ============================================================
-    // Must reply to a message
-    // ============================================================
+    /**************************************************************
+     * MUST REPLY
+     **************************************************************/
 
     if (
       !message.reference ||
@@ -450,7 +502,7 @@ async function handleVoid(
       await safeReply(
         message,
         [
-          '⚠️ **Void failed | 撤銷失敗**',
+          '⚠️ **Void Failed | 撤銷失敗**',
           '',
           '請 Reply 要撤銷的原始金額訊息，再輸入 `void`。',
           'Please reply to the original amount message and send `void`.'
@@ -464,9 +516,12 @@ async function handleVoid(
     const targetMessageId =
       message.reference.messageId;
 
-
     let targetMessage = null;
 
+
+    /**************************************************************
+     * FETCH TARGET
+     **************************************************************/
 
     try {
 
@@ -475,7 +530,7 @@ async function handleVoid(
           targetMessageId
         );
 
-    } catch (err) {
+    } catch (error) {
 
       console.log(
         '[VOID TARGET FETCH FAILED]',
@@ -485,22 +540,17 @@ async function handleVoid(
     }
 
 
-    // ============================================================
-    // 如果 Reply 到 Bot 的確認訊息
-    //
-    // Bot 確認訊息本身是 reply 原始入款，
-    // 所以追溯到原始 message ID。
-    // ============================================================
+    /**************************************************************
+     * BOT CONFIRMATION -> ORIGINAL MESSAGE
+     **************************************************************/
 
     let originalMessageId =
       targetMessageId;
 
-
     if (
       targetMessage &&
       targetMessage.author &&
-      targetMessage.author.id ===
-        client.user.id &&
+      targetMessage.author.id === client.user.id &&
       targetMessage.reference &&
       targetMessage.reference.messageId
     ) {
@@ -528,6 +578,10 @@ async function handleVoid(
     );
 
 
+    /**************************************************************
+     * VOID REQUEST
+     **************************************************************/
+
     const result =
       await callAppsScript({
 
@@ -552,53 +606,51 @@ async function handleVoid(
     );
 
 
-    // ============================================================
-    // NOT FOUND
-    // ============================================================
+    /**************************************************************
+     * FAILED
+     **************************************************************/
 
     if (
       !result ||
       !result.ok
     ) {
 
-      let messageText =
-        [
-          '❌ **Void failed | 撤銷失敗**',
-          '',
-          '找不到這筆入款記錄。',
-          'Receipt record not found.'
-        ].join('\n');
-
-
       if (
         result &&
-        result.error &&
-        result.error !== 'NOT_FOUND'
+        result.error === 'NOT_FOUND'
       ) {
 
-        messageText =
+        await safeReply(
+          message,
           [
-            '⚠️ **Void failed | 撤銷失敗**',
+            '❌ **Void Failed | 撤銷失敗**',
+            '',
+            '找不到這筆入款記錄。',
+            'Receipt record not found.'
+          ].join('\n')
+        );
+
+      } else {
+
+        await safeReply(
+          message,
+          [
+            '⚠️ **Void Failed | 撤銷失敗**',
             '',
             '系統暫時無法處理撤銷，請稍後再試。',
             'The system could not process this void request.'
-          ].join('\n');
+          ].join('\n')
+        );
 
       }
-
-
-      await safeReply(
-        message,
-        messageText
-      );
 
       return;
     }
 
 
-    // ============================================================
-    // ALREADY VOIDED
-    // ============================================================
+    /**************************************************************
+     * ALREADY VOIDED
+     **************************************************************/
 
     if (result.alreadyVoided) {
 
@@ -607,7 +659,7 @@ async function handleVoid(
         [
           '⚠️ **Already Voided | 已經撤銷**',
           '',
-          `Amount | 金額：** ${formatMoney(result.amount)}**`,
+          `Amount | 金額：**${formatAmount(result.amount)}**`,
           '',
           '這筆入款之前已經撤銷，不能重複撤銷。',
           'This receipt has already been voided.'
@@ -618,12 +670,25 @@ async function handleVoid(
     }
 
 
-    // ============================================================
-    // VOID SUCCESS → GET NEW SUMMARY
-    // ============================================================
+    /**************************************************************
+     * GET UPDATED SUMMARY
+     **************************************************************/
 
-    const summary =
-      await getSummary(company);
+    let summary = null;
+
+    try {
+
+      summary =
+        await getSummary(company);
+
+    } catch (summaryError) {
+
+      console.error(
+        '[SUMMARY ERROR AFTER VOID]',
+        summaryError
+      );
+
+    }
 
 
     if (
@@ -634,7 +699,7 @@ async function handleVoid(
       await safeReply(
         message,
         [
-          `♻️ **Voided Successfully | 已撤銷：${formatMoney(result.amount)}**`,
+          `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
           '',
           '撤銷已寫入，但今日統計暫時無法載入。',
           'Void recorded successfully, but the daily summary is temporarily unavailable.'
@@ -645,8 +710,15 @@ async function handleVoid(
     }
 
 
-    const embed =
-      buildSummaryEmbed({
+    /**************************************************************
+     * BUILD VOID EMBED
+     **************************************************************/
+
+    let embed;
+
+    try {
+
+      embed = buildSummaryEmbed({
 
         company,
 
@@ -654,13 +726,33 @@ async function handleVoid(
           Number(result.amount || 0),
 
         reporter:
-          result.reporter || '',
+          voidedBy,
 
         summary,
 
-        titleType: 'VOID'
+        titleType:
+          'VOID'
 
       });
+
+    } catch (embedError) {
+
+      console.error(
+        '[VOID EMBED BUILD ERROR]',
+        embedError
+      );
+
+      await safeReply(
+        message,
+        [
+          `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
+          '',
+          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
+        ].join('\n')
+      );
+
+      return;
+    }
 
 
     await message.reply({
@@ -672,17 +764,15 @@ async function handleVoid(
 
 
     console.log(
-      `[VOID SUCCESS] ${company} ${formatMoney(result.amount)}`
+      `[VOID SUCCESS] ${company} ${formatAmount(result.amount)}`
     );
 
-
-  } catch (err) {
+  } catch (error) {
 
     console.error(
       '[HANDLE VOID ERROR]',
-      err
+      error
     );
-
 
     await safeReply(
       message,
@@ -715,11 +805,19 @@ function buildSummaryEmbed({
     titleType === 'VOID';
 
 
+  /**************************************************************
+   * TITLE
+   **************************************************************/
+
   const title =
     isVoid
-      ? `♻️ 已撤銷入款：${formatMoney(amount)} | Receipt Voided`
-      : `✅ 已確認入款：${formatMoney(amount)} | Receipt Confirmed`;
+      ? `♻️ 已撤銷入款：${formatAmount(amount)} | Receipt Voided`
+      : `✅ 已確認入款：${formatAmount(amount)} | Receipt Confirmed`;
 
+
+  /**************************************************************
+   * ENTRIES
+   **************************************************************/
 
   const entries =
     Array.isArray(summary.entries)
@@ -730,12 +828,10 @@ function buildSummaryEmbed({
   let visibleEntries =
     entries;
 
+  let hiddenCount =
+    0;
 
-  let hiddenCount = 0;
 
-
-  // Discord Embed 有長度限制。
-  // 如果一天非常多筆，只顯示最新 25 筆。
   if (
     entries.length >
     MAX_SUMMARY_ENTRIES
@@ -745,7 +841,6 @@ function buildSummaryEmbed({
       entries.length -
       MAX_SUMMARY_ENTRIES;
 
-
     visibleEntries =
       entries.slice(
         -MAX_SUMMARY_ENTRIES
@@ -753,6 +848,10 @@ function buildSummaryEmbed({
 
   }
 
+
+  /**************************************************************
+   * RECEIPT LINES
+   **************************************************************/
 
   let receiptLines =
     visibleEntries.map(entry => {
@@ -762,18 +861,15 @@ function buildSummaryEmbed({
           entry.time || ''
         );
 
-
       const entryAmount =
-        formatMoney(
+        formatAmount(
           entry.amount
         );
-
 
       const entryReporter =
         String(
           entry.reporter || 'User'
         );
-
 
       return (
         `${time}  ${entryAmount}  (${entryReporter})`
@@ -793,7 +889,9 @@ function buildSummaryEmbed({
   }
 
 
-  if (hiddenCount > 0) {
+  if (
+    hiddenCount > 0
+  ) {
 
     receiptLines.unshift(
       `… ${hiddenCount} earlier receipts not shown | 前面 ${hiddenCount} 筆未顯示`
@@ -801,6 +899,10 @@ function buildSummaryEmbed({
 
   }
 
+
+  /**************************************************************
+   * DESCRIPTION
+   **************************************************************/
 
   let description = '';
 
@@ -827,7 +929,7 @@ function buildSummaryEmbed({
 
 
   description +=
-    `\n\n**Total | 總入款：${formatMoney(summary.totalAmount)}**`;
+    `\n\n**Total | 總入款：${formatAmount(summary.totalAmount)}**`;
 
 
   description +=
@@ -853,24 +955,21 @@ function buildSummaryEmbed({
 async function getSummary(company) {
 
   return await callAppsScript({
-
     action: 'SUMMARY',
     company
-
   });
 
 }
 
 
 /******************************************************************
- * APPS SCRIPT REQUEST
+ * APPS SCRIPT
  ******************************************************************/
 
 async function callAppsScript(payload) {
 
   const controller =
     new AbortController();
-
 
   const timeout =
     setTimeout(
@@ -938,23 +1037,21 @@ async function callAppsScript(payload) {
 
     let result;
 
-
     try {
 
       result =
         JSON.parse(raw);
 
-    } catch (err) {
+    } catch (error) {
 
       throw new Error(
-        'Apps Script returned invalid JSON.'
+        'Apps Script returned invalid JSON'
       );
 
     }
 
 
     return result;
-
 
   } finally {
 
@@ -974,9 +1071,7 @@ function parseAmount(content) {
   if (
     typeof content !== 'string'
   ) {
-
     return null;
-
   }
 
 
@@ -984,36 +1079,34 @@ function parseAmount(content) {
     content.trim();
 
 
-  // 不允許換行
+  // No multiline
   if (
     text.includes('\n') ||
     text.includes('\r')
   ) {
-
     return null;
-
   }
 
 
-  /*
-   * Accepted:
+  /**************************************************************
+   * ACCEPT
    *
    * 100
    * 100.5
    * 100.50
    * 1,000
    * 1,000.50
-   * 5555.55
+   * 168.38
    *
-   * Rejected:
+   * REJECT
    *
    * +100
    * -100
    * RM100
+   * USD100
    * 100 abc
    * 100.999
-   * 1,00
-   */
+   **************************************************************/
 
   const amountRegex =
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
@@ -1022,9 +1115,7 @@ function parseAmount(content) {
   if (
     !amountRegex.test(text)
   ) {
-
     return null;
-
   }
 
 
@@ -1040,20 +1131,15 @@ function parseAmount(content) {
     !Number.isFinite(amount) ||
     amount <= 0
   ) {
-
     return null;
-
   }
 
 
-  // 防止極端錯誤輸入
   if (
     amount >
     999999999.99
   ) {
-
     return null;
-
   }
 
 
@@ -1067,21 +1153,38 @@ function parseAmount(content) {
 
 
 /******************************************************************
- * FORMAT MONEY
+ * FORMAT AMOUNT
+ *
+ * IMPORTANT:
+ * 這只是數字格式。
+ *
+ * 沒有 RM
+ * 沒有 SGD
+ * 沒有 USD
+ * 沒有匯率
+ * 沒有換算
  ******************************************************************/
 
-function formatMoney(value) {
+function formatAmount(value) {
 
-  const amount = Number(value || 0);
+  const amount =
+    Number(value || 0);
 
-  if (!Number.isFinite(amount)) {
+
+  if (
+    !Number.isFinite(amount)
+  ) {
     return '0.00';
   }
 
-  return amount.toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
+
+  return amount.toLocaleString(
+    'en-US',
+    {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }
+  );
 
 }
 
@@ -1089,6 +1192,7 @@ function formatMoney(value) {
 /******************************************************************
  * DISPLAY NAME
  ******************************************************************/
+
 function getDisplayName(message) {
 
   if (
@@ -1150,11 +1254,11 @@ async function safeReply(
       }
     });
 
-  } catch (err) {
+  } catch (error) {
 
     console.error(
-      '[REPLY ERROR]',
-      err
+      '[SAFE REPLY ERROR]',
+      error
     );
 
   }
@@ -1163,7 +1267,7 @@ async function safeReply(
 
 
 /******************************************************************
- * PROCESS ERROR PROTECTION
+ * PROCESS PROTECTION
  ******************************************************************/
 
 process.on(
