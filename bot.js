@@ -1,5 +1,5 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V1.1 STABLE
+ * XINCHEN RECEIPT BOT V1.3 SPEED
  * 鑫財團簡易加賬機器人
  *
  * SG  : 1536956205803503686
@@ -14,6 +14,7 @@
  * - Apps Script MessageID dedupe
  * - Chinese / English
  * - Render health server
+ * - SPEED: ADD returns summary directly
  ******************************************************************/
 
 const http = require('http');
@@ -48,7 +49,7 @@ if (!APPS_SCRIPT_URL) {
  * CONFIG
  ******************************************************************/
 
-const VERSION = 'XINCHEN RECEIPT BOT V1.2 STABLE';
+const VERSION = 'XINCHEN RECEIPT BOT V1.3 SPEED';
 
 const CHANNELS = {
   '1536956205803503686': 'XINCHEN-SG',
@@ -314,26 +315,20 @@ async function handleReceipt(
 
 
     /**************************************************************
-     * ADD IS NOW CONFIRMED
+     * V1.3 SPEED
      *
-     * 從這裡開始，就算 Summary 壞掉，
-     * 都不能再告訴使用者「入款失敗」。
+     * Apps Script ADD 已經直接返回最新 Summary。
+     *
+     * 舊版：
+     * ADD -> 等待
+     * SUMMARY -> 再等待
+     *
+     * 新版：
+     * ADD -> 直接取得 Summary
      **************************************************************/
 
-    let summary = null;
-
-    try {
-
-      summary = await getSummary(company);
-
-    } catch (summaryError) {
-
-      console.error(
-        '[SUMMARY ERROR AFTER ADD]',
-        summaryError
-      );
-
-    }
+    const summary =
+      addResult.summary || null;
 
 
     /**************************************************************
@@ -419,7 +414,6 @@ async function handleReceipt(
         replyError
       );
 
-      // 入款已經成功，所以只做 fallback 顯示
       await safeReply(
         message,
         [
@@ -443,8 +437,6 @@ async function handleReceipt(
       error
     );
 
-    // 如果 ADD 已經確認成功，
-    // 絕對不要說「入款失敗」
     if (
       addResult &&
       addResult.ok &&
@@ -672,6 +664,8 @@ async function handleVoid(
 
     /**************************************************************
      * GET UPDATED SUMMARY
+     *
+     * VOID 暫時保持 V1.2 做法
      **************************************************************/
 
     let summary = null;
@@ -805,19 +799,11 @@ function buildSummaryEmbed({
     titleType === 'VOID';
 
 
-  /**************************************************************
-   * TITLE
-   **************************************************************/
-
   const title =
     isVoid
       ? `♻️ 已撤銷入款：${formatAmount(amount)} | Receipt Voided`
       : `✅ 已確認入款：${formatAmount(amount)} | Receipt Confirmed`;
 
-
-  /**************************************************************
-   * ENTRIES
-   **************************************************************/
 
   const entries =
     Array.isArray(summary.entries)
@@ -848,10 +834,6 @@ function buildSummaryEmbed({
 
   }
 
-
-  /**************************************************************
-   * RECEIPT LINES
-   **************************************************************/
 
   let receiptLines =
     visibleEntries.map(entry => {
@@ -900,10 +882,6 @@ function buildSummaryEmbed({
   }
 
 
-  /**************************************************************
-   * DESCRIPTION
-   **************************************************************/
-
   let description = '';
 
 
@@ -950,6 +928,9 @@ function buildSummaryEmbed({
 
 /******************************************************************
  * GET SUMMARY
+ *
+ * 目前只給 VOID 使用。
+ * ADD V1.3 已經不再呼叫這裡。
  ******************************************************************/
 
 async function getSummary(company) {
@@ -961,10 +942,6 @@ async function getSummary(company) {
 
 }
 
-
-/******************************************************************
- * APPS SCRIPT
- ******************************************************************/
 
 /******************************************************************
  * APPS SCRIPT
@@ -981,74 +958,98 @@ async function callAppsScript(payload) {
 
   try {
 
-    const appsUrl = String(APPS_SCRIPT_URL || '').trim();
+    const appsUrl =
+      String(
+        APPS_SCRIPT_URL || ''
+      ).trim();
+
 
     if (!appsUrl) {
-      throw new Error('APPS_SCRIPT_URL is empty');
+      throw new Error(
+        'APPS_SCRIPT_URL is empty'
+      );
     }
 
+
     if (
-      !appsUrl.startsWith('https://script.google.com/macros/s/') ||
+      !appsUrl.startsWith(
+        'https://script.google.com/macros/s/'
+      ) ||
       !appsUrl.endsWith('/exec')
     ) {
+
       throw new Error(
         'APPS_SCRIPT_URL must be a Google Apps Script /exec URL'
       );
+
     }
+
 
     console.log(
       `[APPS REQUEST] ${payload.action} ${payload.company || ''}`
     );
 
-    /*
-     * IMPORTANT:
-     *
-     * Apps Script Web App POST requests can redirect from
-     * script.google.com to script.googleusercontent.com.
-     *
-     * fetch() is allowed to follow the redirect automatically.
-     */
 
-    const response = await fetch(appsUrl, {
-      method: 'POST',
+    const response =
+      await fetch(
+        appsUrl,
+        {
 
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-        'Accept': 'application/json,text/plain,*/*'
-      },
+          method: 'POST',
 
-      body: JSON.stringify(payload),
+          headers: {
+            'Content-Type':
+              'text/plain;charset=utf-8',
 
-      redirect: 'follow',
+            'Accept':
+              'application/json,text/plain,*/*'
+          },
 
-      signal: controller.signal
-    });
+          body:
+            JSON.stringify(payload),
 
-    const raw = await response.text();
+          redirect:
+            'follow',
+
+          signal:
+            controller.signal
+
+        }
+      );
+
+
+    const raw =
+      await response.text();
+
 
     console.log(
       '[APPS HTTP STATUS]',
       response.status
     );
 
+
     console.log(
       '[APPS FINAL URL]',
       response.url
     );
 
+
     console.log(
       '[APPS CONTENT TYPE]',
-      response.headers.get('content-type') || ''
+      response.headers.get(
+        'content-type'
+      ) || ''
     );
+
 
     console.log(
       '[APPS RAW RESPONSE]',
-      raw.substring(0, 1500)
+      raw.substring(
+        0,
+        1500
+      )
     );
 
-    /*
-     * HTTP ERROR
-     */
 
     if (!response.ok) {
 
@@ -1058,14 +1059,10 @@ async function callAppsScript(payload) {
 
     }
 
-    /*
-     * Apps Script should return JSON.
-     *
-     * If Google returns an HTML error page,
-     * do not try to treat it as JSON.
-     */
 
-    const trimmed = raw.trim();
+    const trimmed =
+      raw.trim();
+
 
     if (
       trimmed.startsWith('<!DOCTYPE') ||
@@ -1079,11 +1076,16 @@ async function callAppsScript(payload) {
 
     }
 
+
     let result;
+
 
     try {
 
-      result = JSON.parse(trimmed);
+      result =
+        JSON.parse(
+          trimmed
+        );
 
     } catch (error) {
 
@@ -1098,9 +1100,6 @@ async function callAppsScript(payload) {
 
     }
 
-    /*
-     * Validate response
-     */
 
     if (
       !result ||
@@ -1113,11 +1112,17 @@ async function callAppsScript(payload) {
 
     }
 
+
     return result;
+
 
   } catch (error) {
 
-    if (error.name === 'AbortError') {
+
+    if (
+      error.name ===
+      'AbortError'
+    ) {
 
       console.error(
         '[APPS TIMEOUT]',
@@ -1131,6 +1136,7 @@ async function callAppsScript(payload) {
 
     }
 
+
     console.error(
       '[APPS REQUEST ERROR]',
       payload.action,
@@ -1138,15 +1144,20 @@ async function callAppsScript(payload) {
       error.message
     );
 
+
     throw error;
+
 
   } finally {
 
-    clearTimeout(timeout);
+    clearTimeout(
+      timeout
+    );
 
   }
 
 }
+
 
 /******************************************************************
  * PARSE AMOUNT
@@ -1206,11 +1217,16 @@ function parseAmount(content) {
 
 
   const normalized =
-    text.replace(/,/g, '');
+    text.replace(
+      /,/g,
+      ''
+    );
 
 
   const amount =
-    Number(normalized);
+    Number(
+      normalized
+    );
 
 
   if (
@@ -1254,7 +1270,9 @@ function parseAmount(content) {
 function formatAmount(value) {
 
   const amount =
-    Number(value || 0);
+    Number(
+      value || 0
+    );
 
 
   if (
