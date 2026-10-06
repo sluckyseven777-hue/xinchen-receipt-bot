@@ -1,0 +1,15 @@
+{
+  "name": "xinchen-receipt-bot",
+  "version": "1.0.0",
+  "description": "XINCHEN SG / IRL Discord Receipt Bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3"
+  }
+}
