@@ -1,20 +1,21 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V1.3 SPEED
- * 鑫財團簡易加賬機器人
+ * XINCHEN RECEIPT BOT V1.4 SAFE
  *
  * SG  : 1536956205803503686
  * IRL : 1555181833816117359
  *
+ * SAFE ACCOUNTING DESIGN
+ *
  * - Pure amount only
  * - SG / IRL separated
- * - No currency / no exchange rate
- * - Daily business-date summary
- * - Reply + void / cancel / 撤销 / 撤銷
- * - Message edits ignored
- * - Apps Script MessageID dedupe
- * - Chinese / English
- * - Render health server
- * - SPEED: ADD returns summary directly
+ * - No currency / exchange rate
+ * - Business Date summary
+ * - MessageID dedupe
+ * - Void
+ * - Edit ignored
+ * - ADD summary returned directly
+ * - Failed ADD response will be verified by MessageID
+ * - Never blindly repeat ADD
  ******************************************************************/
 
 const http = require('http');
@@ -31,17 +32,32 @@ const {
  * ENV
  ******************************************************************/
 
-const TOKEN = process.env.TOKEN;
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const TOKEN =
+  process.env.TOKEN;
+
+const APPS_SCRIPT_URL =
+  process.env.APPS_SCRIPT_URL;
+
 
 if (!TOKEN) {
-  console.error('[BOOT ERROR] TOKEN is missing');
+
+  console.error(
+    '[BOOT ERROR] TOKEN is missing'
+  );
+
   process.exit(1);
+
 }
 
+
 if (!APPS_SCRIPT_URL) {
-  console.error('[BOOT ERROR] APPS_SCRIPT_URL is missing');
+
+  console.error(
+    '[BOOT ERROR] APPS_SCRIPT_URL is missing'
+  );
+
   process.exit(1);
+
 }
 
 
@@ -49,177 +65,225 @@ if (!APPS_SCRIPT_URL) {
  * CONFIG
  ******************************************************************/
 
-const VERSION = 'XINCHEN RECEIPT BOT V1.3 SPEED';
+const VERSION =
+  'XINCHEN RECEIPT BOT V1.4 SAFE';
+
 
 const CHANNELS = {
-  '1536956205803503686': 'XINCHEN-SG',
-  '1555181833816117359': 'XINCHEN-IRL'
+
+  '1536956205803503686':
+    'XINCHEN-SG',
+
+  '1555181833816117359':
+    'XINCHEN-IRL'
+
 };
 
-const VOID_WORDS = new Set([
-  'void',
-  'cancel',
-  '撤销',
-  '撤銷'
-]);
 
-const MAX_SUMMARY_ENTRIES = 25;
+const VOID_WORDS =
+  new Set([
+
+    'void',
+    'cancel',
+    '撤销',
+    '撤銷'
+
+  ]);
 
 
-/******************************************************************
- * DISCORD CLIENT
- ******************************************************************/
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+const MAX_SUMMARY_ENTRIES =
+  25;
 
 
 /******************************************************************
- * RENDER HTTP SERVER
+ * DISCORD
  ******************************************************************/
 
-const PORT = process.env.PORT || 10000;
+const client =
+  new Client({
 
-const server = http.createServer((req, res) => {
+    intents: [
 
-  res.writeHead(200, {
-    'Content-Type': 'text/plain; charset=utf-8'
+      GatewayIntentBits.Guilds,
+
+      GatewayIntentBits.GuildMessages,
+
+      GatewayIntentBits.MessageContent
+
+    ]
+
   });
 
-  res.end(
-    `XINCHEN Receipt Bot is running.\n${VERSION}`
+
+/******************************************************************
+ * HTTP SERVER
+ ******************************************************************/
+
+const PORT =
+  process.env.PORT || 10000;
+
+
+const server =
+  http.createServer(
+    (req, res) => {
+
+      res.writeHead(
+        200,
+        {
+          'Content-Type':
+            'text/plain; charset=utf-8'
+        }
+      );
+
+      res.end(
+        `XINCHEN Receipt Bot is running.\n${VERSION}`
+      );
+
+    }
   );
 
-});
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] listening: ${PORT}`);
-});
+server.listen(
+  PORT,
+  '0.0.0.0',
+  () => {
+
+    console.log(
+      `[HTTP] listening: ${PORT}`
+    );
+
+  }
+);
 
 
 /******************************************************************
  * READY
  ******************************************************************/
 
-client.once(Events.ClientReady, readyClient => {
+client.once(
+  Events.ClientReady,
+  readyClient => {
 
-  console.log(`[BOOT] ${VERSION}`);
-  console.log(`[GATEWAY READY] ${readyClient.user.tag}`);
+    console.log(
+      `[BOOT] ${VERSION}`
+    );
 
-  console.log(
-    '[CHANNEL] XINCHEN-SG : 1536956205803503686'
-  );
+    console.log(
+      `[GATEWAY READY] ${readyClient.user.tag}`
+    );
 
-  console.log(
-    '[CHANNEL] XINCHEN-IRL: 1555181833816117359'
-  );
+    console.log(
+      '[CHANNEL] XINCHEN-SG : 1536956205803503686'
+    );
 
-});
+    console.log(
+      '[CHANNEL] XINCHEN-IRL: 1555181833816117359'
+    );
+
+  }
+);
 
 
 /******************************************************************
  * MESSAGE CREATE
  ******************************************************************/
 
-client.on(Events.MessageCreate, async message => {
+client.on(
+  Events.MessageCreate,
+  async message => {
 
-  try {
+    try {
 
-    // Ignore bots
-    if (message.author.bot) {
-      return;
-    }
-
-    // Ignore webhooks
-    if (message.webhookId) {
-      return;
-    }
-
-    // Only receipt channels
-    const company = CHANNELS[message.channel.id];
-
-    if (!company) {
-      return;
-    }
-
-    const content = String(
-      message.content || ''
-    ).trim();
-
-    if (!content) {
-      return;
-    }
-
-    console.log(
-      `[MESSAGE] ${company} | ${message.author.tag} | ${content}`
-    );
+      if (message.author.bot) {
+        return;
+      }
 
 
-    /**************************************************************
-     * VOID
-     **************************************************************/
+      if (message.webhookId) {
+        return;
+      }
 
-    if (
-      VOID_WORDS.has(
-        content.toLowerCase()
-      )
-    ) {
 
-      await handleVoid(
-        message,
-        company
+      const company =
+        CHANNELS[
+          message.channel.id
+        ];
+
+
+      if (!company) {
+        return;
+      }
+
+
+      const content =
+        String(
+          message.content || ''
+        ).trim();
+
+
+      if (!content) {
+        return;
+      }
+
+
+      console.log(
+        `[MESSAGE] ${company} | ${message.author.tag} | ${content}`
       );
 
-      return;
+
+      /************************************************************
+       * VOID
+       ************************************************************/
+
+      if (
+        VOID_WORDS.has(
+          content.toLowerCase()
+        )
+      ) {
+
+        await handleVoid(
+          message,
+          company
+        );
+
+        return;
+
+      }
+
+
+      /************************************************************
+       * AMOUNT
+       ************************************************************/
+
+      const amount =
+        parseAmount(
+          content
+        );
+
+
+      if (amount === null) {
+        return;
+      }
+
+
+      await handleReceipt(
+        message,
+        company,
+        amount
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        '[MESSAGE ERROR]',
+        error
+      );
+
     }
-
-
-    /**************************************************************
-     * PURE AMOUNT
-     **************************************************************/
-
-    const amount = parseAmount(content);
-
-    // 普通聊天直接忽略
-    if (amount === null) {
-      return;
-    }
-
-    await handleReceipt(
-      message,
-      company,
-      amount
-    );
-
-  } catch (error) {
-
-    console.error(
-      '[MESSAGE ERROR]',
-      error
-    );
 
   }
-
-});
-
-
-/******************************************************************
- * IMPORTANT
- *
- * 沒有 MessageUpdate listener。
- *
- * 100
- * Edit -> 9999
- *
- * 不會重新入帳。
- *
- * 必須 VOID 後重新報數。
- ******************************************************************/
+);
 
 
 /******************************************************************
@@ -232,9 +296,34 @@ async function handleReceipt(
   amount
 ) {
 
-  const reporter = getDisplayName(message);
+  const reporter =
+    getDisplayName(
+      message
+    );
 
-  let addResult = null;
+
+  const payload = {
+
+    action:
+      'ADD',
+
+    company,
+
+    amount,
+
+    reporter,
+
+    discordId:
+      message.author.id,
+
+    messageId:
+      message.id
+
+  };
+
+
+  let result = null;
+
 
   try {
 
@@ -244,59 +333,148 @@ async function handleReceipt(
         company,
         amount,
         reporter,
-        messageId: message.id
+        messageId:
+          message.id
       }
     );
 
 
     /**************************************************************
-     * ADD
+     * PRIMARY ADD
      **************************************************************/
 
-    addResult = await callAppsScript({
+    try {
 
-      action: 'ADD',
+      result =
+        await callAppsScript(
+          payload
+        );
 
-      company,
+    } catch (addError) {
 
-      amount,
+      console.error(
+        '[ADD RESPONSE ERROR]',
+        addError.message
+      );
 
-      reporter,
 
-      discordId:
-        message.author.id,
+      /************************************************************
+       * IMPORTANT
+       *
+       * ADD may already have been written.
+       *
+       * NEVER blindly send ADD again.
+       *
+       * Verify MessageID first.
+       ************************************************************/
 
-      messageId:
-        message.id
+      result =
+        await verifyReceipt(
+          company,
+          message.id
+        );
 
-    });
+
+      if (
+        result &&
+        result.ok &&
+        result.found
+      ) {
+
+        console.log(
+          '[ADD RECOVERED BY CHECK]',
+          message.id
+        );
+
+
+        result = {
+
+          ok:
+            true,
+
+          duplicate:
+            false,
+
+          recovered:
+            true,
+
+          company:
+            company,
+
+          amount:
+            Number(
+              result.amount || amount
+            ),
+
+          status:
+            result.status,
+
+          summary:
+            result.summary
+
+        };
+
+      } else {
+
+        /**********************************************************
+         * UNKNOWN STATE
+         *
+         * We do NOT tell user to repost.
+         **********************************************************/
+
+        await safeReply(
+          message,
+          [
+            '⏳ **Receipt Pending Verification | 入款狀態確認中**',
+            '',
+            `Amount | 金額：**${formatAmount(amount)}**`,
+            '',
+            '系統暫時無法確認回傳結果。',
+            '請勿重新報數，以免造成重複記錄。',
+            '',
+            'The system could not confirm the response.',
+            'Please do NOT repost this amount.'
+          ].join('\n')
+        );
+
+        return;
+
+      }
+
+    }
+
 
     console.log(
       '[ADD RESULT]',
-      addResult
+      result
     );
 
 
     /**************************************************************
-     * ADD FAILED
+     * FAILED
      **************************************************************/
 
     if (
-      !addResult ||
-      !addResult.ok
+      !result ||
+      !result.ok
     ) {
 
       await safeReply(
         message,
         [
-          '⚠️ **Receipt Failed | 入款記錄失敗**',
+          '⚠️ **Receipt Not Confirmed | 入款未確認**',
           '',
-          '系統暫時無法完成記錄，請稍後再試。',
-          'The system could not record this receipt. Please try again later.'
+          `Amount | 金額：**${formatAmount(amount)}**`,
+          '',
+          '請勿重新報數。',
+          'Please do NOT repost this amount.',
+          '',
+          '請通知管理員檢查記錄。'
         ].join('\n')
       );
 
       return;
+
     }
 
 
@@ -304,35 +482,60 @@ async function handleReceipt(
      * DUPLICATE
      **************************************************************/
 
-    if (addResult.duplicate) {
+    if (
+      result.duplicate
+    ) {
 
       console.log(
         `[DUPLICATE] ${message.id}`
       );
 
       return;
+
     }
 
 
     /**************************************************************
-     * V1.3 SPEED
-     *
-     * Apps Script ADD 已經直接返回最新 Summary。
-     *
-     * 舊版：
-     * ADD -> 等待
-     * SUMMARY -> 再等待
-     *
-     * 新版：
-     * ADD -> 直接取得 Summary
+     * SUMMARY
      **************************************************************/
 
-    const summary =
-      addResult.summary || null;
+    let summary =
+      result.summary || null;
+
+
+    /*
+     * If ADD succeeded but for some reason summary
+     * is not included, try one SUMMARY request.
+     *
+     * This does NOT affect accounting.
+     */
+
+    if (
+      !summary ||
+      !summary.ok
+    ) {
+
+      try {
+
+        summary =
+          await getSummary(
+            company
+          );
+
+      } catch (summaryError) {
+
+        console.error(
+          '[SUMMARY FALLBACK ERROR]',
+          summaryError.message
+        );
+
+      }
+
+    }
 
 
     /**************************************************************
-     * SUMMARY UNAVAILABLE
+     * CONFIRMED WITHOUT SUMMARY
      **************************************************************/
 
     if (
@@ -347,88 +550,56 @@ async function handleReceipt(
           '',
           `👤 **Reporter | 報數人：** ${reporter}`,
           '',
-          '⚠️ 今日統計暫時無法載入。',
-          'Daily summary is temporarily unavailable.'
+          '入款已成功記錄。',
+          'Receipt has been recorded successfully.',
+          '',
+          '⚠️ 今日統計暫時無法顯示。'
         ].join('\n')
       );
 
       return;
+
     }
 
 
     /**************************************************************
-     * BUILD EMBED
+     * EMBED
      **************************************************************/
 
-    let embed;
+    const embed =
+      buildSummaryEmbed({
 
-    try {
-
-      embed = buildSummaryEmbed({
         company,
+
         amount,
+
         reporter,
+
         summary,
-        titleType: 'ADD'
+
+        titleType:
+          'ADD'
+
       });
 
-    } catch (embedError) {
 
-      console.error(
-        '[EMBED BUILD ERROR]',
-        embedError
-      );
+    await message.reply({
 
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          `👤 **Reporter | 報數人：** ${reporter}`,
-          '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
-        ].join('\n')
-      );
+      embeds:
+        [embed],
 
-      return;
-    }
+      allowedMentions: {
+        repliedUser:
+          false
+      }
 
-
-    /**************************************************************
-     * SEND
-     **************************************************************/
-
-    try {
-
-      await message.reply({
-        embeds: [embed],
-        allowedMentions: {
-          repliedUser: false
-        }
-      });
-
-    } catch (replyError) {
-
-      console.error(
-        '[EMBED REPLY ERROR]',
-        replyError
-      );
-
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
-        ].join('\n')
-      );
-
-    }
+    });
 
 
     console.log(
       `[RECEIPT SUCCESS] ${company} ${formatAmount(amount)}`
     );
+
 
   } catch (error) {
 
@@ -437,34 +608,78 @@ async function handleReceipt(
       error
     );
 
-    if (
-      addResult &&
-      addResult.ok &&
-      !addResult.duplicate
-    ) {
 
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          '入款已經成功寫入，但顯示統計時發生錯誤。',
-          'Receipt was recorded successfully, but the summary could not be displayed.'
-        ].join('\n')
-      );
-
-      return;
-    }
+    /*
+     * At this stage we cannot safely say
+     * "failed".
+     */
 
     await safeReply(
       message,
       [
-        '⚠️ **System Error | 系統錯誤**',
+        '⚠️ **Receipt Status Unknown | 入款狀態待確認**',
         '',
-        '暫時無法處理這筆入款，請稍後再試。',
-        'Unable to process this receipt right now.'
+        `Amount | 金額：**${formatAmount(amount)}**`,
+        '',
+        '請勿重新報數。',
+        'Please do NOT repost this amount.',
+        '',
+        '請通知管理員檢查 Sheet。'
       ].join('\n')
     );
+
+  }
+
+}
+
+
+/******************************************************************
+ * VERIFY RECEIPT
+ ******************************************************************/
+
+async function verifyReceipt(
+  company,
+  messageId
+) {
+
+  console.log(
+    `[VERIFY RECEIPT] ${company} ${messageId}`
+  );
+
+
+  try {
+
+    const result =
+      await callAppsScript({
+
+        action:
+          'CHECK',
+
+        company,
+
+        messageId
+
+      });
+
+
+    console.log(
+      '[VERIFY RESULT]',
+      result
+    );
+
+
+    return result;
+
+
+  } catch (error) {
+
+    console.error(
+      '[VERIFY ERROR]',
+      error.message
+    );
+
+
+    return null;
 
   }
 
@@ -482,10 +697,6 @@ async function handleVoid(
 
   try {
 
-    /**************************************************************
-     * MUST REPLY
-     **************************************************************/
-
     if (
       !message.reference ||
       !message.reference.messageId
@@ -502,18 +713,17 @@ async function handleVoid(
       );
 
       return;
+
     }
 
 
     const targetMessageId =
       message.reference.messageId;
 
-    let targetMessage = null;
 
+    let targetMessage =
+      null;
 
-    /**************************************************************
-     * FETCH TARGET
-     **************************************************************/
 
     try {
 
@@ -532,17 +742,15 @@ async function handleVoid(
     }
 
 
-    /**************************************************************
-     * BOT CONFIRMATION -> ORIGINAL MESSAGE
-     **************************************************************/
-
     let originalMessageId =
       targetMessageId;
+
 
     if (
       targetMessage &&
       targetMessage.author &&
-      targetMessage.author.id === client.user.id &&
+      targetMessage.author.id ===
+        client.user.id &&
       targetMessage.reference &&
       targetMessage.reference.messageId
     ) {
@@ -554,7 +762,9 @@ async function handleVoid(
 
 
     const voidedBy =
-      getDisplayName(message);
+      getDisplayName(
+        message
+      );
 
 
     console.log(
@@ -570,26 +780,107 @@ async function handleVoid(
     );
 
 
-    /**************************************************************
-     * VOID REQUEST
-     **************************************************************/
+    let result =
+      null;
 
-    const result =
-      await callAppsScript({
 
-        action: 'VOID',
+    try {
 
-        company,
+      result =
+        await callAppsScript({
 
-        targetMessageId:
-          originalMessageId,
+          action:
+            'VOID',
 
-        voidMessageId:
-          message.id,
+          company,
 
-        voidedBy
+          targetMessageId:
+            originalMessageId,
 
-      });
+          voidMessageId:
+            message.id,
+
+          voidedBy
+
+        });
+
+
+    } catch (error) {
+
+      /*
+       * VOID may have succeeded even if Google response failed.
+       *
+       * CHECK original MessageID.
+       */
+
+      console.error(
+        '[VOID RESPONSE ERROR]',
+        error.message
+      );
+
+
+      const check =
+        await verifyReceipt(
+          company,
+          originalMessageId
+        );
+
+
+      if (
+        check &&
+        check.ok &&
+        check.found &&
+        check.status === 'Voided'
+      ) {
+
+        result = {
+
+          ok:
+            true,
+
+          voided:
+            true,
+
+          recovered:
+            true,
+
+          company,
+
+          amount:
+            check.amount,
+
+          summary:
+            check.summary
+
+        };
+
+
+        console.log(
+          '[VOID RECOVERED BY CHECK]',
+          originalMessageId
+        );
+
+
+      } else {
+
+        await safeReply(
+          message,
+          [
+            '⏳ **Void Pending Verification | 撤銷狀態待確認**',
+            '',
+            '系統暫時無法確認撤銷結果。',
+            '請勿重複撤銷。',
+            '',
+            'The system could not confirm the void result.',
+            'Please do NOT repeat the void request.'
+          ].join('\n')
+        );
+
+        return;
+
+      }
+
+    }
 
 
     console.log(
@@ -598,10 +889,6 @@ async function handleVoid(
     );
 
 
-    /**************************************************************
-     * FAILED
-     **************************************************************/
-
     if (
       !result ||
       !result.ok
@@ -609,7 +896,8 @@ async function handleVoid(
 
       if (
         result &&
-        result.error === 'NOT_FOUND'
+        result.error ===
+          'NOT_FOUND'
       ) {
 
         await safeReply(
@@ -627,24 +915,23 @@ async function handleVoid(
         await safeReply(
           message,
           [
-            '⚠️ **Void Failed | 撤銷失敗**',
+            '⚠️ **Void Not Confirmed | 撤銷未確認**',
             '',
-            '系統暫時無法處理撤銷，請稍後再試。',
-            'The system could not process this void request.'
+            '請勿重複撤銷。',
+            'Please do NOT repeat the void request.'
           ].join('\n')
         );
 
       }
 
       return;
+
     }
 
 
-    /**************************************************************
-     * ALREADY VOIDED
-     **************************************************************/
-
-    if (result.alreadyVoided) {
+    if (
+      result.alreadyVoided
+    ) {
 
       await safeReply(
         message,
@@ -659,28 +946,34 @@ async function handleVoid(
       );
 
       return;
+
     }
 
 
-    /**************************************************************
-     * GET UPDATED SUMMARY
-     *
-     * VOID 暫時保持 V1.2 做法
-     **************************************************************/
+    let summary =
+      result.summary || null;
 
-    let summary = null;
 
-    try {
+    if (
+      !summary ||
+      !summary.ok
+    ) {
 
-      summary =
-        await getSummary(company);
+      try {
 
-    } catch (summaryError) {
+        summary =
+          await getSummary(
+            company
+          );
 
-      console.error(
-        '[SUMMARY ERROR AFTER VOID]',
-        summaryError
-      );
+      } catch (error) {
+
+        console.error(
+          '[SUMMARY ERROR AFTER VOID]',
+          error.message
+        );
+
+      }
 
     }
 
@@ -695,29 +988,27 @@ async function handleVoid(
         [
           `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
           '',
-          '撤銷已寫入，但今日統計暫時無法載入。',
-          'Void recorded successfully, but the daily summary is temporarily unavailable.'
+          '撤銷已成功記錄。',
+          'Void recorded successfully.',
+          '',
+          '⚠️ 今日統計暫時無法顯示。'
         ].join('\n')
       );
 
       return;
+
     }
 
 
-    /**************************************************************
-     * BUILD VOID EMBED
-     **************************************************************/
-
-    let embed;
-
-    try {
-
-      embed = buildSummaryEmbed({
+    const embed =
+      buildSummaryEmbed({
 
         company,
 
         amount:
-          Number(result.amount || 0),
+          Number(
+            result.amount || 0
+          ),
 
         reporter:
           voidedBy,
@@ -729,37 +1020,24 @@ async function handleVoid(
 
       });
 
-    } catch (embedError) {
-
-      console.error(
-        '[VOID EMBED BUILD ERROR]',
-        embedError
-      );
-
-      await safeReply(
-        message,
-        [
-          `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
-          '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
-        ].join('\n')
-      );
-
-      return;
-    }
-
 
     await message.reply({
-      embeds: [embed],
+
+      embeds:
+        [embed],
+
       allowedMentions: {
-        repliedUser: false
+        repliedUser:
+          false
       }
+
     });
 
 
     console.log(
       `[VOID SUCCESS] ${company} ${formatAmount(result.amount)}`
     );
+
 
   } catch (error) {
 
@@ -768,13 +1046,16 @@ async function handleVoid(
       error
     );
 
+
     await safeReply(
       message,
       [
-        '⚠️ **System Error | 系統錯誤**',
+        '⚠️ **Void Status Unknown | 撤銷狀態待確認**',
         '',
-        '暫時無法處理撤銷。',
-        'Unable to process the void request right now.'
+        '請勿重複撤銷。',
+        'Please do NOT repeat the void request.',
+        '',
+        '請通知管理員檢查 Sheet。'
       ].join('\n')
     );
 
@@ -796,23 +1077,31 @@ function buildSummaryEmbed({
 }) {
 
   const isVoid =
-    titleType === 'VOID';
+    titleType ===
+      'VOID';
 
 
   const title =
     isVoid
+
       ? `♻️ 已撤銷入款：${formatAmount(amount)} | Receipt Voided`
+
       : `✅ 已確認入款：${formatAmount(amount)} | Receipt Confirmed`;
 
 
   const entries =
-    Array.isArray(summary.entries)
+    Array.isArray(
+      summary.entries
+    )
+
       ? summary.entries
+
       : [];
 
 
   let visibleEntries =
     entries;
+
 
   let hiddenCount =
     0;
@@ -827,6 +1116,7 @@ function buildSummaryEmbed({
       entries.length -
       MAX_SUMMARY_ENTRIES;
 
+
     visibleEntries =
       entries.slice(
         -MAX_SUMMARY_ENTRIES
@@ -836,32 +1126,39 @@ function buildSummaryEmbed({
 
 
   let receiptLines =
-    visibleEntries.map(entry => {
+    visibleEntries.map(
+      entry => {
 
-      const time =
-        String(
-          entry.time || ''
+        const time =
+          String(
+            entry.time || ''
+          );
+
+
+        const entryAmount =
+          formatAmount(
+            entry.amount
+          );
+
+
+        const entryReporter =
+          String(
+            entry.reporter ||
+            'User'
+          );
+
+
+        return (
+          `${time}  ${entryAmount}  (${entryReporter})`
         );
 
-      const entryAmount =
-        formatAmount(
-          entry.amount
-        );
-
-      const entryReporter =
-        String(
-          entry.reporter || 'User'
-        );
-
-      return (
-        `${time}  ${entryAmount}  (${entryReporter})`
-      );
-
-    });
+      }
+    );
 
 
   if (
-    receiptLines.length === 0
+    receiptLines.length ===
+    0
   ) {
 
     receiptLines = [
@@ -882,7 +1179,8 @@ function buildSummaryEmbed({
   }
 
 
-  let description = '';
+  let description =
+    '';
 
 
   if (isVoid) {
@@ -903,7 +1201,9 @@ function buildSummaryEmbed({
 
 
   description +=
-    receiptLines.join('\n');
+    receiptLines.join(
+      '\n'
+    );
 
 
   description +=
@@ -915,12 +1215,20 @@ function buildSummaryEmbed({
 
 
   return new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(description)
+
+    .setTitle(
+      title
+    )
+
+    .setDescription(
+      description
+    )
+
     .setFooter({
       text:
         `${company} • XINCHEN RECEIPT`
     })
+
     .setTimestamp();
 
 }
@@ -928,33 +1236,46 @@ function buildSummaryEmbed({
 
 /******************************************************************
  * GET SUMMARY
- *
- * 目前只給 VOID 使用。
- * ADD V1.3 已經不再呼叫這裡。
  ******************************************************************/
 
-async function getSummary(company) {
+async function getSummary(
+  company
+) {
 
   return await callAppsScript({
-    action: 'SUMMARY',
+
+    action:
+      'SUMMARY',
+
     company
+
   });
 
 }
 
 
 /******************************************************************
- * APPS SCRIPT
- * V1.2 - STABLE REQUEST LAYER
+ * APPS SCRIPT REQUEST
  ******************************************************************/
 
-async function callAppsScript(payload) {
+async function callAppsScript(
+  payload
+) {
 
-  const controller = new AbortController();
+  const controller =
+    new AbortController();
 
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, 30000);
+
+  const timeout =
+    setTimeout(
+      () => {
+
+        controller.abort();
+
+      },
+      30000
+    );
+
 
   try {
 
@@ -965,9 +1286,11 @@ async function callAppsScript(payload) {
 
 
     if (!appsUrl) {
+
       throw new Error(
         'APPS_SCRIPT_URL is empty'
       );
+
     }
 
 
@@ -975,7 +1298,9 @@ async function callAppsScript(payload) {
       !appsUrl.startsWith(
         'https://script.google.com/macros/s/'
       ) ||
-      !appsUrl.endsWith('/exec')
+      !appsUrl.endsWith(
+        '/exec'
+      )
     ) {
 
       throw new Error(
@@ -995,18 +1320,23 @@ async function callAppsScript(payload) {
         appsUrl,
         {
 
-          method: 'POST',
+          method:
+            'POST',
 
           headers: {
+
             'Content-Type':
               'text/plain;charset=utf-8',
 
             'Accept':
               'application/json,text/plain,*/*'
+
           },
 
           body:
-            JSON.stringify(payload),
+            JSON.stringify(
+              payload
+            ),
 
           redirect:
             'follow',
@@ -1051,10 +1381,12 @@ async function callAppsScript(payload) {
     );
 
 
-    if (!response.ok) {
+    if (
+      !response.ok
+    ) {
 
       throw new Error(
-        `Apps Script HTTP ${response.status} | Final URL: ${response.url}`
+        `Apps Script HTTP ${response.status}`
       );
 
     }
@@ -1065,13 +1397,19 @@ async function callAppsScript(payload) {
 
 
     if (
-      trimmed.startsWith('<!DOCTYPE') ||
-      trimmed.startsWith('<html') ||
-      trimmed.startsWith('<HTML')
+      trimmed.startsWith(
+        '<!DOCTYPE'
+      ) ||
+      trimmed.startsWith(
+        '<html'
+      ) ||
+      trimmed.startsWith(
+        '<HTML'
+      )
     ) {
 
       throw new Error(
-        `Apps Script returned HTML instead of JSON | Final URL: ${response.url}`
+        'Apps Script returned HTML instead of JSON'
       );
 
     }
@@ -1089,13 +1427,8 @@ async function callAppsScript(payload) {
 
     } catch (error) {
 
-      console.error(
-        '[APPS JSON PARSE ERROR]',
-        error
-      );
-
       throw new Error(
-        `Apps Script returned invalid JSON | Final URL: ${response.url}`
+        'Apps Script returned invalid JSON'
       );
 
     }
@@ -1103,11 +1436,12 @@ async function callAppsScript(payload) {
 
     if (
       !result ||
-      typeof result !== 'object'
+      typeof result !==
+        'object'
     ) {
 
       throw new Error(
-        'Apps Script returned an invalid response object'
+        'Apps Script returned invalid response object'
       );
 
     }
@@ -1129,6 +1463,7 @@ async function callAppsScript(payload) {
         payload.action,
         payload.company || ''
       );
+
 
       throw new Error(
         'Apps Script request timed out'
@@ -1163,12 +1498,17 @@ async function callAppsScript(payload) {
  * PARSE AMOUNT
  ******************************************************************/
 
-function parseAmount(content) {
+function parseAmount(
+  content
+) {
 
   if (
-    typeof content !== 'string'
+    typeof content !==
+    'string'
   ) {
+
     return null;
+
   }
 
 
@@ -1176,43 +1516,28 @@ function parseAmount(content) {
     content.trim();
 
 
-  // No multiline
   if (
     text.includes('\n') ||
     text.includes('\r')
   ) {
+
     return null;
+
   }
 
-
-  /**************************************************************
-   * ACCEPT
-   *
-   * 100
-   * 100.5
-   * 100.50
-   * 1,000
-   * 1,000.50
-   * 168.38
-   *
-   * REJECT
-   *
-   * +100
-   * -100
-   * RM100
-   * USD100
-   * 100 abc
-   * 100.999
-   **************************************************************/
 
   const amountRegex =
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
 
 
   if (
-    !amountRegex.test(text)
+    !amountRegex.test(
+      text
+    )
   ) {
+
     return null;
+
   }
 
 
@@ -1230,10 +1555,14 @@ function parseAmount(content) {
 
 
   if (
-    !Number.isFinite(amount) ||
+    !Number.isFinite(
+      amount
+    ) ||
     amount <= 0
   ) {
+
     return null;
+
   }
 
 
@@ -1241,7 +1570,9 @@ function parseAmount(content) {
     amount >
     999999999.99
   ) {
+
     return null;
+
   }
 
 
@@ -1256,18 +1587,11 @@ function parseAmount(content) {
 
 /******************************************************************
  * FORMAT AMOUNT
- *
- * IMPORTANT:
- * 這只是數字格式。
- *
- * 沒有 RM
- * 沒有 SGD
- * 沒有 USD
- * 沒有匯率
- * 沒有換算
  ******************************************************************/
 
-function formatAmount(value) {
+function formatAmount(
+  value
+) {
 
   const amount =
     Number(
@@ -1276,17 +1600,26 @@ function formatAmount(value) {
 
 
   if (
-    !Number.isFinite(amount)
+    !Number.isFinite(
+      amount
+    )
   ) {
+
     return '0.00';
+
   }
 
 
   return amount.toLocaleString(
     'en-US',
     {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+
+      minimumFractionDigits:
+        2,
+
+      maximumFractionDigits:
+        2
+
     }
   );
 
@@ -1297,7 +1630,9 @@ function formatAmount(value) {
  * DISPLAY NAME
  ******************************************************************/
 
-function getDisplayName(message) {
+function getDisplayName(
+  message
+) {
 
   if (
     message.member &&
@@ -1352,11 +1687,16 @@ async function safeReply(
   try {
 
     await message.reply({
+
       content,
+
       allowedMentions: {
-        repliedUser: false
+        repliedUser:
+          false
       }
+
     });
+
 
   } catch (error) {
 
@@ -1404,4 +1744,6 @@ process.on(
  * LOGIN
  ******************************************************************/
 
-client.login(TOKEN);
+client.login(
+  TOKEN
+);
