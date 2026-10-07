@@ -1,30 +1,13 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V1.2 STABLE
+ * XINCHEN RECEIPT BOT V1.3 STABLE VERIFY
  *
- * SG  : 1536956205803503686
- * IRL : 1555181833816117359
- *
- * STABLE FLOW
- *
- * ADD
- *   ↓
- * Apps Script ADD
- *   ↓
- * Apps Script SUMMARY
- *   ↓
- * Discord
- *
- * VOID
- *   ↓
- * Apps Script VOID
- *   ↓
- * Apps Script SUMMARY
- *   ↓
- * Discord
- *
- * NO SPEED
- * NO CHECK
- * NO RECOVERY
+ * IMPORTANT:
+ * - Apps Script 不需要修改
+ * - ADD 永远只发送一次
+ * - ADD timeout / 404 后绝对不会重新 ADD
+ * - 使用 SUMMARY + MessageID 确认是否已经成功入账
+ * - SUMMARY 自动重试
+ * - SG / IRL 完全独立
  ******************************************************************/
 
 const http = require('http');
@@ -41,32 +24,17 @@ const {
  * ENV
  ******************************************************************/
 
-const TOKEN =
-  process.env.TOKEN;
-
-const APPS_SCRIPT_URL =
-  process.env.APPS_SCRIPT_URL;
-
+const TOKEN = process.env.TOKEN;
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
 if (!TOKEN) {
-
-  console.error(
-    '[BOOT ERROR] TOKEN is missing'
-  );
-
+  console.error('[BOOT ERROR] TOKEN is missing');
   process.exit(1);
-
 }
 
-
 if (!APPS_SCRIPT_URL) {
-
-  console.error(
-    '[BOOT ERROR] APPS_SCRIPT_URL is missing'
-  );
-
+  console.error('[BOOT ERROR] APPS_SCRIPT_URL is missing');
   process.exit(1);
-
 }
 
 
@@ -75,66 +43,44 @@ if (!APPS_SCRIPT_URL) {
  ******************************************************************/
 
 const VERSION =
-  'XINCHEN RECEIPT BOT V1.2 STABLE';
-
+  'XINCHEN RECEIPT BOT V1.3 STABLE VERIFY';
 
 const CHANNELS = {
-
-  '1536956205803503686':
-    'XINCHEN-SG',
-
-  '1555181833816117359':
-    'XINCHEN-IRL'
-
+  '1536956205803503686': 'XINCHEN-SG',
+  '1555181833816117359': 'XINCHEN-IRL'
 };
-
 
 const VOID_WORDS =
   new Set([
-
     'void',
-
     'cancel',
-
     '撤销',
-
     '撤銷'
-
   ]);
 
-
-const MAX_SUMMARY_ENTRIES =
-  25;
+const MAX_SUMMARY_ENTRIES = 25;
 
 
 /******************************************************************
- * DISCORD CLIENT
+ * DISCORD
  ******************************************************************/
 
 const client =
   new Client({
-
     intents: [
-
       GatewayIntentBits.Guilds,
-
       GatewayIntentBits.GuildMessages,
-
       GatewayIntentBits.MessageContent
-
     ]
-
   });
 
 
 /******************************************************************
- * RENDER HTTP SERVER
+ * HTTP SERVER
  ******************************************************************/
 
 const PORT =
-  process.env.PORT ||
-  10000;
-
+  process.env.PORT || 10000;
 
 const server =
   http.createServer(
@@ -148,7 +94,6 @@ const server =
         }
       );
 
-
       res.end(
         `XINCHEN Receipt Bot is running.\n${VERSION}`
       );
@@ -156,16 +101,13 @@ const server =
     }
   );
 
-
 server.listen(
   PORT,
   '0.0.0.0',
   () => {
-
     console.log(
       `[HTTP] listening: ${PORT}`
     );
-
   }
 );
 
@@ -182,16 +124,13 @@ client.once(
       `[BOOT] ${VERSION}`
     );
 
-
     console.log(
       `[GATEWAY READY] ${readyClient.user.tag}`
     );
 
-
     console.log(
       '[CHANNEL] XINCHEN-SG  : 1536956205803503686'
     );
-
 
     console.log(
       '[CHANNEL] XINCHEN-IRL : 1555181833816117359'
@@ -211,61 +150,31 @@ client.on(
 
     try {
 
-      /*
-       * Ignore bots
-       */
-
-      if (
-        message.author.bot
-      ) {
-
+      if (message.author.bot) {
         return;
-
       }
 
-
-      /*
-       * Ignore webhooks
-       */
-
-      if (
-        message.webhookId
-      ) {
-
+      if (message.webhookId) {
         return;
-
       }
-
-
-      /*
-       * Receipt channels only
-       */
 
       const company =
         CHANNELS[
           message.channel.id
         ];
 
-
       if (!company) {
-
         return;
-
       }
-
 
       const content =
         String(
           message.content || ''
         ).trim();
 
-
       if (!content) {
-
         return;
-
       }
-
 
       console.log(
         `[MESSAGE] ${company} | ${message.author.tag} | ${content}`
@@ -287,41 +196,26 @@ client.on(
           company
         );
 
-
         return;
-
       }
 
 
       /************************************************************
-       * PURE AMOUNT
+       * AMOUNT
        ************************************************************/
 
       const amount =
-        parseAmount(
-          content
-        );
+        parseAmount(content);
 
-
-      /*
-       * 普通聊天直接忽略
-       */
-
-      if (
-        amount === null
-      ) {
-
+      if (amount === null) {
         return;
-
       }
-
 
       await handleReceipt(
         message,
         company,
         amount
       );
-
 
     } catch (error) {
 
@@ -347,43 +241,36 @@ async function handleReceipt(
 ) {
 
   const reporter =
-    getDisplayName(
-      message
-    );
+    getDisplayName(message);
+
+  const messageId =
+    message.id;
+
+  console.log(
+    '[RECEIPT]',
+    {
+      company,
+      amount,
+      reporter,
+      messageId
+    }
+  );
 
 
-  let addResult =
-    null;
+  /****************************************************************
+   * STEP 1
+   * ADD 只发送一次
+   ****************************************************************/
 
+  let addResult = null;
+  let addResponseFailed = false;
 
   try {
-
-    console.log(
-      '[RECEIPT]',
-      {
-
-        company,
-
-        amount,
-
-        reporter,
-
-        messageId:
-          message.id
-
-      }
-    );
-
-
-    /**************************************************************
-     * ADD
-     **************************************************************/
 
     addResult =
       await callAppsScript({
 
-        action:
-          'ADD',
+        action: 'ADD',
 
         company,
 
@@ -394,253 +281,391 @@ async function handleReceipt(
         discordId:
           message.author.id,
 
-        messageId:
-          message.id
+        messageId
 
       });
-
 
     console.log(
       '[ADD RESULT]',
       addResult
     );
 
+  } catch (error) {
 
-    /**************************************************************
-     * ADD FAILED
-     **************************************************************/
+    /*
+     * 非常重要：
+     *
+     * 这里只代表 HTTP response 失败。
+     * 不代表 Sheet 没写入。
+     *
+     * 绝对不重新 ADD。
+     */
 
-    if (
+    addResponseFailed = true;
+
+    console.error(
+      '[ADD RESPONSE FAILED]',
+      company,
+      messageId,
+      error.message
+    );
+
+  }
+
+
+  /****************************************************************
+   * STEP 2
+   * ADD 正常明确失败
+   ****************************************************************/
+
+  if (
+    !addResponseFailed &&
+    (
       !addResult ||
       !addResult.ok
-    ) {
+    )
+  ) {
 
-      await safeReply(
-        message,
-        [
-          '⚠️ **Receipt Failed | 入款記錄失敗**',
-          '',
-          '系統暫時無法完成記錄，請稍後再試。',
-          'The system could not record this receipt. Please try again later.'
-        ].join('\n')
-      );
+    await safeReply(
+      message,
+      [
+        '⚠️ **Receipt Failed | 入款記錄失敗**',
+        '',
+        '系統明確回傳入款失敗。',
+        'The system returned an unsuccessful receipt result.',
+        '',
+        '請管理員檢查記錄。'
+      ].join('\n')
+    );
+
+    return;
+  }
 
 
-      return;
+  /****************************************************************
+   * STEP 3
+   * DUPLICATE
+   ****************************************************************/
 
-    }
+  if (
+    !addResponseFailed &&
+    addResult &&
+    addResult.duplicate
+  ) {
+
+    console.log(
+      `[DUPLICATE] ${messageId}`
+    );
+
+    return;
+  }
 
 
-    /**************************************************************
-     * DUPLICATE
-     **************************************************************/
+  /****************************************************************
+   * STEP 4
+   * 查 SUMMARY
+   *
+   * 无论 ADD 正常还是 response timeout，
+   * 都通过 SUMMARY 得到最新 Total。
+   ****************************************************************/
+
+  const summary =
+    await getSummaryWithRetry(
+      company,
+      3
+    );
+
+
+  /****************************************************************
+   * CASE A
+   * ADD response 正常成功
+   ****************************************************************/
+
+  if (
+    !addResponseFailed &&
+    addResult &&
+    addResult.ok
+  ) {
 
     if (
-      addResult.duplicate
+      summary &&
+      summary.ok
     ) {
+
+      await sendReceiptConfirmation(
+        message,
+        company,
+        amount,
+        reporter,
+        summary
+      );
 
       console.log(
-        `[DUPLICATE] ${message.id}`
+        `[RECEIPT SUCCESS] ${company} ${formatAmount(amount)}`
       );
-
 
       return;
-
     }
 
 
-    /**************************************************************
-     * GET SUMMARY
-     *
-     * STABLE VERSION:
-     * ADD 与 SUMMARY 完全分开。
-     **************************************************************/
+    /*
+     * ADD 已明确成功。
+     * Summary 即使失败也不能显示 System Error。
+     */
 
-    let summary =
-      null;
+    await safeReply(
+      message,
+      [
+        `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
+        '',
+        `👤 **Reporter | 報數人：** ${reporter}`,
+        '',
+        '入款已成功記錄。',
+        'Receipt has been recorded successfully.',
+        '',
+        '⚠️ 今日統計暫時無法載入。'
+      ].join('\n')
+    );
 
-
-    try {
-
-      summary =
-        await getSummary(
-          company
-        );
-
-    } catch (summaryError) {
-
-      console.error(
-        '[SUMMARY ERROR AFTER ADD]',
-        summaryError
-      );
-
-    }
+    return;
+  }
 
 
-    /**************************************************************
-     * ADD SUCCESS / SUMMARY FAILED
-     **************************************************************/
+  /****************************************************************
+   * CASE B
+   * ADD response timeout / 404
+   *
+   * 用 SUMMARY 里的 MessageID 验证。
+   ****************************************************************/
+
+  if (
+    addResponseFailed
+  ) {
 
     if (
-      !summary ||
-      !summary.ok
+      summary &&
+      summary.ok
     ) {
 
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          `👤 **Reporter | 報數人：** ${reporter}`,
-          '',
-          '入款已成功記錄，但今日統計暫時無法載入。',
-          'Receipt recorded successfully, but the daily summary is temporarily unavailable.'
-        ].join('\n')
-      );
-
-
-      return;
-
-    }
-
-
-    /**************************************************************
-     * BUILD EMBED
-     **************************************************************/
-
-    let embed;
-
-
-    try {
-
-      embed =
-        buildSummaryEmbed({
-
-          company,
-
-          amount,
-
-          reporter,
-
+      const found =
+        findMessageInSummary(
           summary,
+          messageId
+        );
 
-          titleType:
-            'ADD'
 
-        });
+      /************************************************************
+       * 找到了！
+       *
+       * 证明刚才 ADD 虽然 HTTP response 失败，
+       * 但 Sheet 实际已经成功写入。
+       ************************************************************/
 
-    } catch (embedError) {
+      if (found) {
+
+        console.log(
+          '[ADD VERIFIED BY SUMMARY]',
+          {
+            company,
+            messageId,
+            amount: found.amount
+          }
+        );
+
+
+        await sendReceiptConfirmation(
+          message,
+          company,
+          Number(
+            found.amount || amount
+          ),
+          reporter,
+          summary
+        );
+
+
+        console.log(
+          `[RECEIPT RECOVERED] ${company} ${messageId}`
+        );
+
+        return;
+      }
+
+
+      /************************************************************
+       * SUMMARY 成功，但找不到这个 MessageID
+       *
+       * 这时候不能重新 ADD。
+       ************************************************************/
 
       console.error(
-        '[EMBED BUILD ERROR]',
-        embedError
+        '[ADD NOT FOUND IN SUMMARY]',
+        company,
+        messageId
       );
 
 
       await safeReply(
         message,
         [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
+          '⚠️ **Receipt Not Confirmed | 入款未確認**',
           '',
-          `👤 **Reporter | 報數人：** ${reporter}`,
+          `Amount | 金額：**${formatAmount(amount)}**`,
           '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
+          '系統沒有在今日記錄中找到這筆 Message ID。',
+          'The receipt was not found in today\'s records.',
+          '',
+          '請先讓管理員檢查 Sheet，**不要立即重新報數**。'
         ].join('\n')
       );
 
-
       return;
-
     }
 
 
     /**************************************************************
-     * SEND
+     * ADD response 失败
+     * SUMMARY 也完全查不到
+     *
+     * 状态未知。
      **************************************************************/
 
-    try {
+    await safeReply(
+      message,
+      [
+        '⏳ **Receipt Pending Verification | 入款狀態待確認**',
+        '',
+        `Amount | 金額：**${formatAmount(amount)}**`,
+        '',
+        'Google 暫時沒有回傳可確認的結果。',
+        '',
+        '**請勿重新報數。**',
+        'Please do NOT repost this amount.',
+        '',
+        '請管理員直接檢查 Sheet。'
+      ].join('\n')
+    );
 
-      await message.reply({
+    return;
+  }
 
-        embeds:
-          [embed],
+}
 
-        allowedMentions: {
-          repliedUser:
-            false
-        }
+
+/******************************************************************
+ * FIND MESSAGE IN SUMMARY
+ ******************************************************************/
+
+function findMessageInSummary(
+  summary,
+  messageId
+) {
+
+  if (
+    !summary ||
+    !Array.isArray(
+      summary.entries
+    )
+  ) {
+
+    return null;
+  }
+
+
+  const target =
+    String(
+      messageId
+    ).trim();
+
+
+  for (
+    const entry of
+    summary.entries
+  ) {
+
+    const id =
+      String(
+        entry.messageId || ''
+      ).trim();
+
+
+    if (
+      id === target
+    ) {
+
+      return entry;
+    }
+
+  }
+
+
+  return null;
+}
+
+
+/******************************************************************
+ * SEND RECEIPT CONFIRMATION
+ ******************************************************************/
+
+async function sendReceiptConfirmation(
+  message,
+  company,
+  amount,
+  reporter,
+  summary
+) {
+
+  try {
+
+    const embed =
+      buildSummaryEmbed({
+
+        company,
+
+        amount,
+
+        reporter,
+
+        summary,
+
+        titleType: 'ADD'
 
       });
 
 
-    } catch (replyError) {
+    await message.reply({
 
-      console.error(
-        '[EMBED REPLY ERROR]',
-        replyError
-      );
+      embeds: [embed],
 
+      allowedMentions: {
+        repliedUser: false
+      }
 
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
-        ].join('\n')
-      );
-
-    }
-
-
-    console.log(
-      `[RECEIPT SUCCESS] ${company} ${formatAmount(amount)}`
-    );
-
+    });
 
   } catch (error) {
 
     console.error(
-      '[HANDLE RECEIPT ERROR]',
+      '[CONFIRMATION EMBED ERROR]',
       error
     );
 
 
     /*
-     * 如果 Apps Script 已明确返回成功，
-     * 只是后面的显示发生问题，
-     * 不可以告诉员工重新入账。
+     * 入账已经确认。
+     * Discord Embed 出错也不能显示 System Error。
      */
-
-    if (
-      addResult &&
-      addResult.ok &&
-      !addResult.duplicate
-    ) {
-
-      await safeReply(
-        message,
-        [
-          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-          '',
-          '入款已經成功寫入，但顯示統計時發生錯誤。',
-          'Receipt was recorded successfully, but the summary could not be displayed.'
-        ].join('\n')
-      );
-
-
-      return;
-
-    }
-
 
     await safeReply(
       message,
       [
-        '⚠️ **System Error | 系統錯誤**',
+        `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
         '',
-        '暫時無法處理這筆入款，請先檢查記錄後再操作。',
-        'Unable to process this receipt right now. Please check the record first.'
+        `👤 **Reporter | 報數人：** ${reporter}`,
+        '',
+        `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`,
+        '',
+        `📅 **Business Date | 工作日：${summary.businessDate || '-'}**`
       ].join('\n')
     );
 
@@ -650,7 +675,108 @@ async function handleReceipt(
 
 
 /******************************************************************
- * HANDLE VOID
+ * SUMMARY WITH RETRY
+ *
+ * 这里只 READ。
+ * 不会 ADD。
+ ******************************************************************/
+
+async function getSummaryWithRetry(
+  company,
+  maxAttempts = 3
+) {
+
+  for (
+    let attempt = 1;
+    attempt <= maxAttempts;
+    attempt++
+  ) {
+
+    try {
+
+      console.log(
+        `[SUMMARY ATTEMPT] ${company} ${attempt}/${maxAttempts}`
+      );
+
+
+      const result =
+        await callAppsScript({
+
+          action: 'SUMMARY',
+
+          company
+
+        });
+
+
+      if (
+        result &&
+        result.ok
+      ) {
+
+        console.log(
+          `[SUMMARY SUCCESS] ${company} ${attempt}/${maxAttempts}`
+        );
+
+        return result;
+      }
+
+
+      console.error(
+        `[SUMMARY INVALID] ${company} ${attempt}/${maxAttempts}`,
+        result
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        `[SUMMARY FAILED] ${company} ${attempt}/${maxAttempts}`,
+        error.message
+      );
+
+    }
+
+
+    if (
+      attempt <
+      maxAttempts
+    ) {
+
+      /*
+       * 1st retry: 1 second
+       * 2nd retry: 2 seconds
+       */
+
+      const waitMs =
+        attempt * 1000;
+
+
+      console.log(
+        `[SUMMARY RETRY] ${company} in ${waitMs}ms`
+      );
+
+
+      await sleep(
+        waitMs
+      );
+
+    }
+
+  }
+
+
+  console.error(
+    `[SUMMARY GIVE UP] ${company}`
+  );
+
+
+  return null;
+}
+
+
+/******************************************************************
+ * VOID
  ******************************************************************/
 
 async function handleVoid(
@@ -659,10 +785,6 @@ async function handleVoid(
 ) {
 
   try {
-
-    /**************************************************************
-     * MUST REPLY
-     **************************************************************/
 
     if (
       !message.reference ||
@@ -679,9 +801,7 @@ async function handleVoid(
         ].join('\n')
       );
 
-
       return;
-
     }
 
 
@@ -693,17 +813,12 @@ async function handleVoid(
       null;
 
 
-    /**************************************************************
-     * FETCH TARGET
-     **************************************************************/
-
     try {
 
       targetMessage =
         await message.channel.messages.fetch(
           targetMessageId
         );
-
 
     } catch (error) {
 
@@ -715,13 +830,14 @@ async function handleVoid(
     }
 
 
-    /**************************************************************
-     * BOT CONFIRMATION -> ORIGINAL MESSAGE
-     **************************************************************/
-
     let originalMessageId =
       targetMessageId;
 
+
+    /*
+     * 如果 reply 的是 Bot confirmation，
+     * 追溯到原始报数 MessageID。
+     */
 
     if (
       targetMessage &&
@@ -747,30 +863,20 @@ async function handleVoid(
     console.log(
       '[VOID]',
       {
-
         company,
-
         targetMessageId:
           originalMessageId,
-
         voidMessageId:
           message.id,
-
         voidedBy
-
       }
     );
 
 
-    /**************************************************************
-     * VOID REQUEST
-     **************************************************************/
-
     const result =
       await callAppsScript({
 
-        action:
-          'VOID',
+        action: 'VOID',
 
         company,
 
@@ -790,10 +896,6 @@ async function handleVoid(
       result
     );
 
-
-    /**************************************************************
-     * FAILED
-     **************************************************************/
 
     if (
       !result ||
@@ -816,7 +918,6 @@ async function handleVoid(
           ].join('\n')
         );
 
-
       } else {
 
         await safeReply(
@@ -824,22 +925,16 @@ async function handleVoid(
           [
             '⚠️ **Void Failed | 撤銷失敗**',
             '',
-            '系統暫時無法處理撤銷，請稍後再試。',
+            '系統暫時無法處理撤銷。',
             'The system could not process this void request.'
           ].join('\n')
         );
 
       }
 
-
       return;
-
     }
 
-
-    /**************************************************************
-     * ALREADY VOIDED
-     **************************************************************/
 
     if (
       result.alreadyVoided
@@ -852,41 +947,24 @@ async function handleVoid(
           '',
           `Amount | 金額：**${formatAmount(result.amount)}**`,
           '',
-          '這筆入款之前已經撤銷，不能重複撤銷。',
+          '這筆入款之前已經撤銷。',
           'This receipt has already been voided.'
         ].join('\n')
       );
 
-
       return;
-
     }
 
 
     /**************************************************************
-     * GET UPDATED SUMMARY
+     * VOID 成功以后只查 SUMMARY
      **************************************************************/
 
-    let summary =
-      null;
-
-
-    try {
-
-      summary =
-        await getSummary(
-          company
-        );
-
-
-    } catch (summaryError) {
-
-      console.error(
-        '[SUMMARY ERROR AFTER VOID]',
-        summaryError
+    const summary =
+      await getSummaryWithRetry(
+        company,
+        3
       );
-
-    }
 
 
     if (
@@ -899,78 +977,43 @@ async function handleVoid(
         [
           `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
           '',
-          '撤銷已寫入，但今日統計暫時無法載入。',
-          'Void recorded successfully, but the daily summary is temporarily unavailable.'
-        ].join('\n')
-      );
-
-
-      return;
-
-    }
-
-
-    /**************************************************************
-     * BUILD VOID EMBED
-     **************************************************************/
-
-    let embed;
-
-
-    try {
-
-      embed =
-        buildSummaryEmbed({
-
-          company,
-
-          amount:
-            Number(
-              result.amount || 0
-            ),
-
-          reporter:
-            voidedBy,
-
-          summary,
-
-          titleType:
-            'VOID'
-
-        });
-
-
-    } catch (embedError) {
-
-      console.error(
-        '[VOID EMBED BUILD ERROR]',
-        embedError
-      );
-
-
-      await safeReply(
-        message,
-        [
-          `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
+          '撤銷已成功記錄。',
+          'Void recorded successfully.',
           '',
-          `💹 **Today's Total | 今日總入款：${formatAmount(summary.totalAmount)}**`
+          '⚠️ 今日統計暫時無法顯示。'
         ].join('\n')
       );
 
-
       return;
-
     }
+
+
+    const embed =
+      buildSummaryEmbed({
+
+        company,
+
+        amount:
+          Number(
+            result.amount || 0
+          ),
+
+        reporter:
+          voidedBy,
+
+        summary,
+
+        titleType: 'VOID'
+
+      });
 
 
     await message.reply({
 
-      embeds:
-        [embed],
+      embeds: [embed],
 
       allowedMentions: {
-        repliedUser:
-          false
+        repliedUser: false
       }
 
     });
@@ -989,13 +1032,22 @@ async function handleVoid(
     );
 
 
+    /*
+     * VOID HTTP response 异常时，
+     * 不叫员工重复 void。
+     */
+
     await safeReply(
       message,
       [
-        '⚠️ **System Error | 系統錯誤**',
+        '⏳ **Void Pending Verification | 撤銷狀態待確認**',
         '',
-        '暫時無法處理撤銷。',
-        'Unable to process the void request right now.'
+        '目前無法確認 Google 回傳結果。',
+        '',
+        '**請勿重複撤銷。**',
+        'Please do NOT repeat the void request.',
+        '',
+        '請管理員檢查 Sheet 的 Status。'
       ].join('\n')
     );
 
@@ -1017,8 +1069,7 @@ function buildSummaryEmbed({
 }) {
 
   const isVoid =
-    titleType ===
-    'VOID';
+    titleType === 'VOID';
 
 
   const title =
@@ -1033,9 +1084,7 @@ function buildSummaryEmbed({
     Array.isArray(
       summary.entries
     )
-
       ? summary.entries
-
       : [];
 
 
@@ -1043,8 +1092,7 @@ function buildSummaryEmbed({
     entries;
 
 
-  let hiddenCount =
-    0;
+  let hiddenCount = 0;
 
 
   if (
@@ -1097,8 +1145,7 @@ function buildSummaryEmbed({
 
 
   if (
-    receiptLines.length ===
-    0
+    receiptLines.length === 0
   ) {
 
     receiptLines = [
@@ -1119,13 +1166,10 @@ function buildSummaryEmbed({
   }
 
 
-  let description =
-    '';
+  let description = '';
 
 
-  if (
-    isVoid
-  ) {
+  if (isVoid) {
 
     description +=
       `**Voided By | 撤銷人：** ${reporter || '-'}\n\n`;
@@ -1143,9 +1187,7 @@ function buildSummaryEmbed({
 
 
   description +=
-    receiptLines.join(
-      '\n'
-    );
+    receiptLines.join('\n');
 
 
   description +=
@@ -1158,9 +1200,7 @@ function buildSummaryEmbed({
 
   return new EmbedBuilder()
 
-    .setTitle(
-      title
-    )
+    .setTitle(title)
 
     .setDescription(
       description
@@ -1172,142 +1212,6 @@ function buildSummaryEmbed({
     })
 
     .setTimestamp();
-
-}
-
-
-/******************************************************************
- * GET SUMMARY
- ******************************************************************/
-
-/******************************************************************
- * GET SUMMARY - STABLE RETRY
- *
- * 只重试 SUMMARY
- * 绝对不会重新 ADD
- *
- * 第一次失败：
- * 等 1 秒后再查
- *
- * 第二次失败：
- * 交回上层显示
- * "入款成功，但统计暂时无法显示"
- ******************************************************************/
-
-async function getSummary(
-  company
-) {
-
-  const MAX_ATTEMPTS = 2;
-
-  for (
-    let attempt = 1;
-    attempt <= MAX_ATTEMPTS;
-    attempt++
-  ) {
-
-    try {
-
-      console.log(
-        `[SUMMARY ATTEMPT] ${company} ${attempt}/${MAX_ATTEMPTS}`
-      );
-
-
-      const result =
-        await callAppsScript({
-
-          action:
-            'SUMMARY',
-
-          company
-
-        });
-
-
-      if (
-        result &&
-        result.ok
-      ) {
-
-        console.log(
-          `[SUMMARY SUCCESS] ${company} attempt ${attempt}`
-        );
-
-        return result;
-
-      }
-
-
-      console.error(
-        `[SUMMARY INVALID] ${company} attempt ${attempt}`,
-        result
-      );
-
-
-    } catch (error) {
-
-      console.error(
-        `[SUMMARY ATTEMPT FAILED] ${company} attempt ${attempt}`,
-        error.message
-      );
-
-    }
-
-
-    /**************************************************************
-     * 第一次失败才等待
-     **************************************************************/
-
-    if (
-      attempt <
-      MAX_ATTEMPTS
-    ) {
-
-      console.log(
-        `[SUMMARY RETRY] ${company} retrying in 1 second...`
-      );
-
-
-      await sleep(
-        1000
-      );
-
-    }
-
-  }
-
-
-  /**************************************************************
-   * 两次都失败
-   *
-   * 注意：
-   * 这里只代表 SUMMARY 失败。
-   * ADD 已经成功，不会重新 ADD。
-   **************************************************************/
-
-  console.error(
-    `[SUMMARY FAILED] ${company} after ${MAX_ATTEMPTS} attempts`
-  );
-
-
-  return null;
-
-}
-
-
-/******************************************************************
- * SLEEP
- ******************************************************************/
-
-function sleep(ms) {
-
-  return new Promise(
-    resolve =>
-      setTimeout(
-        resolve,
-        ms
-      )
-  );
 
 }
 
@@ -1327,9 +1231,7 @@ async function callAppsScript(
   const timeout =
     setTimeout(
       () => {
-
         controller.abort();
-
       },
       30000
     );
@@ -1356,9 +1258,7 @@ async function callAppsScript(
       !appsUrl.startsWith(
         'https://script.google.com/macros/s/'
       ) ||
-      !appsUrl.endsWith(
-        '/exec'
-      )
+      !appsUrl.endsWith('/exec')
     ) {
 
       throw new Error(
@@ -1377,18 +1277,14 @@ async function callAppsScript(
       await fetch(
         appsUrl,
         {
-
-          method:
-            'POST',
+          method: 'POST',
 
           headers: {
-
             'Content-Type':
               'text/plain;charset=utf-8',
 
             'Accept':
               'application/json,text/plain,*/*'
-
           },
 
           body:
@@ -1396,12 +1292,10 @@ async function callAppsScript(
               payload
             ),
 
-          redirect:
-            'follow',
+          redirect: 'follow',
 
           signal:
             controller.signal
-
         }
       );
 
@@ -1439,12 +1333,10 @@ async function callAppsScript(
     );
 
 
-    if (
-      !response.ok
-    ) {
+    if (!response.ok) {
 
       throw new Error(
-        `Apps Script HTTP ${response.status} | Final URL: ${response.url}`
+        `Apps Script HTTP ${response.status}`
       );
 
     }
@@ -1467,7 +1359,7 @@ async function callAppsScript(
     ) {
 
       throw new Error(
-        `Apps Script returned HTML instead of JSON | Final URL: ${response.url}`
+        'Apps Script returned HTML instead of JSON'
       );
 
     }
@@ -1483,17 +1375,10 @@ async function callAppsScript(
           trimmed
         );
 
-
     } catch (error) {
 
-      console.error(
-        '[APPS JSON PARSE ERROR]',
-        error
-      );
-
-
       throw new Error(
-        `Apps Script returned invalid JSON | Final URL: ${response.url}`
+        'Apps Script returned invalid JSON'
       );
 
     }
@@ -1501,12 +1386,11 @@ async function callAppsScript(
 
     if (
       !result ||
-      typeof result !==
-      'object'
+      typeof result !== 'object'
     ) {
 
       throw new Error(
-        'Apps Script returned an invalid response object'
+        'Apps Script returned invalid response object'
       );
 
     }
@@ -1549,9 +1433,7 @@ async function callAppsScript(
 
   } finally {
 
-    clearTimeout(
-      timeout
-    );
+    clearTimeout(timeout);
 
   }
 
@@ -1572,7 +1454,6 @@ function parseAmount(
   ) {
 
     return null;
-
   }
 
 
@@ -1580,52 +1461,24 @@ function parseAmount(
     content.trim();
 
 
-  /*
-   * No multiline
-   */
-
   if (
     text.includes('\n') ||
     text.includes('\r')
   ) {
 
     return null;
-
   }
 
-
-  /*
-   * ACCEPT:
-   *
-   * 100
-   * 100.5
-   * 100.50
-   * 1,000
-   * 1,000.50
-   * 168.38
-   *
-   * REJECT:
-   *
-   * +100
-   * -100
-   * RM100
-   * USD100
-   * 100 abc
-   * 100.999
-   */
 
   const amountRegex =
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
 
 
   if (
-    !amountRegex.test(
-      text
-    )
+    !amountRegex.test(text)
   ) {
 
     return null;
-
   }
 
 
@@ -1637,20 +1490,15 @@ function parseAmount(
 
 
   const amount =
-    Number(
-      normalized
-    );
+    Number(normalized);
 
 
   if (
-    !Number.isFinite(
-      amount
-    ) ||
+    !Number.isFinite(amount) ||
     amount <= 0
   ) {
 
     return null;
-
   }
 
 
@@ -1660,7 +1508,6 @@ function parseAmount(
   ) {
 
     return null;
-
   }
 
 
@@ -1675,8 +1522,6 @@ function parseAmount(
 
 /******************************************************************
  * FORMAT AMOUNT
- *
- * Pure number only.
  ******************************************************************/
 
 function formatAmount(
@@ -1690,26 +1535,18 @@ function formatAmount(
 
 
   if (
-    !Number.isFinite(
-      amount
-    )
+    !Number.isFinite(amount)
   ) {
 
     return '0.00';
-
   }
 
 
   return amount.toLocaleString(
     'en-US',
     {
-
-      minimumFractionDigits:
-        2,
-
-      maximumFractionDigits:
-        2
-
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     }
   );
 
@@ -1761,7 +1598,6 @@ function getDisplayName(
 
 
   return 'User';
-
 }
 
 
@@ -1781,12 +1617,10 @@ async function safeReply(
       content,
 
       allowedMentions: {
-        repliedUser:
-          false
+        repliedUser: false
       }
 
     });
-
 
   } catch (error) {
 
@@ -1796,6 +1630,23 @@ async function safeReply(
     );
 
   }
+
+}
+
+
+/******************************************************************
+ * SLEEP
+ ******************************************************************/
+
+function sleep(ms) {
+
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
 
 }
 
@@ -1834,6 +1685,4 @@ process.on(
  * LOGIN
  ******************************************************************/
 
-client.login(
-  TOKEN
-);
+client.login(TOKEN);
