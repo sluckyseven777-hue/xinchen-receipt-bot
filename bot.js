@@ -1452,52 +1452,72 @@ function parseAmount(
     typeof content !==
     'string'
   ) {
-
     return null;
   }
-
 
   const text =
     content.trim();
 
 
+  // 必须以 + 开头
   if (
-    text.includes('\n') ||
-    text.includes('\r')
+    !text.startsWith('+')
   ) {
-
     return null;
   }
 
 
+  // 去掉最前面的 +
+  const amountText =
+    text.slice(1).trim();
+
+
+  // 不允许空内容 / 多行
+  if (
+    !amountText ||
+    amountText.includes('\n') ||
+    amountText.includes('\r')
+  ) {
+    return null;
+  }
+
+
+  // 支持：
+  // +1
+  // +1.23
+  // +100
+  // +1000.50
+  // +1,000.50
   const amountRegex =
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
 
 
   if (
-    !amountRegex.test(text)
+    !amountRegex.test(
+      amountText
+    )
   ) {
-
     return null;
   }
 
 
   const normalized =
-    text.replace(
+    amountText.replace(
       /,/g,
       ''
     );
 
 
   const amount =
-    Number(normalized);
+    Number(
+      normalized
+    );
 
 
   if (
     !Number.isFinite(amount) ||
     amount <= 0
   ) {
-
     return null;
   }
 
@@ -1506,7 +1526,6 @@ function parseAmount(
     amount >
     999999999.99
   ) {
-
     return null;
   }
 
@@ -1515,39 +1534,6 @@ function parseAmount(
     Math.round(
       amount * 100
     ) / 100
-  );
-
-}
-
-
-/******************************************************************
- * FORMAT AMOUNT
- ******************************************************************/
-
-function formatAmount(
-  value
-) {
-
-  const amount =
-    Number(
-      value || 0
-    );
-
-
-  if (
-    !Number.isFinite(amount)
-  ) {
-
-    return '0.00';
-  }
-
-
-  return amount.toLocaleString(
-    'en-US',
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }
   );
 
 }
