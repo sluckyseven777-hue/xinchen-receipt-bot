@@ -1,8 +1,16 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V2.0 STABLE
+ * XINCHEN RECEIPT BOT V2.1 STABLE
  *
  * INPUT:
+ *
  * +11.23
+ *   -> ADD receipt
+ *
+ * +0
+ * +0.00
+ *   -> SHOW TODAY SUMMARY ONLY
+ *   -> NO ADD
+ *   -> NO SHEET RECORD
  *
  * CORE:
  * - ADD only ONCE
@@ -11,6 +19,7 @@
  * - CHECK is READ ONLY
  * - NEVER retry ADD automatically
  * - Strict response validation
+ * - +0 = Summary command
  * - VOID supported
  * - SG / IRL completely separate
  ******************************************************************/
@@ -48,7 +57,7 @@ if (!APPS_SCRIPT_URL) {
  ******************************************************************/
 
 const VERSION =
-  'XINCHEN RECEIPT BOT V2.0 STABLE';
+  'XINCHEN RECEIPT BOT V2.1 STABLE';
 
 const CHANNELS = {
   '1536956205803503686': 'XINCHEN-SG',
@@ -208,6 +217,28 @@ client.on(
 
 
       /************************************************************
+       * +0 / +0.00
+       *
+       * SUMMARY ONLY.
+       * NEVER ADD TO SHEET.
+       ************************************************************/
+
+      if (
+        isSummaryCommand(
+          content
+        )
+      ) {
+
+        await handleSummaryCommand(
+          message,
+          company
+        );
+
+        return;
+      }
+
+
+      /************************************************************
        * AMOUNT
        ************************************************************/
 
@@ -235,6 +266,139 @@ client.on(
 
   }
 );
+
+
+/******************************************************************
+ * +0 SUMMARY COMMAND
+ ******************************************************************/
+
+function isSummaryCommand(
+  content
+) {
+
+  if (
+    typeof content !==
+    'string'
+  ) {
+    return false;
+  }
+
+  const text =
+    content.trim();
+
+  /*
+   * Accepted:
+   *
+   * +0
+   * +0.0
+   * +0.00
+   *
+   * Not accepted:
+   *
+   * 0
+   * 0.00
+   * +00
+   * +0.000
+   */
+
+  return (
+    /^\+0(?:\.0{1,2})?$/.test(
+      text
+    )
+  );
+
+}
+
+
+/******************************************************************
+ * HANDLE +0 SUMMARY
+ ******************************************************************/
+
+async function handleSummaryCommand(
+  message,
+  company
+) {
+
+  console.log(
+    `[SUMMARY COMMAND] ${company} | ${message.author.tag}`
+  );
+
+
+  const summary =
+    await getSummaryWithRetry(
+      company,
+      3
+    );
+
+
+  if (!summary) {
+
+    await safeReply(
+      message,
+      [
+        '⚠️ **Summary Temporarily Unavailable | 今日統計暫時無法載入**',
+        '',
+        '請稍後再輸入 `+0` 查看。',
+        'Please try `+0` again later.'
+      ].join('\n')
+    );
+
+    return;
+  }
+
+
+  try {
+
+    const embed =
+      buildTodaySummaryEmbed({
+
+        company,
+
+        summary
+
+      });
+
+
+    await message.reply({
+
+      embeds: [embed],
+
+      allowedMentions: {
+        repliedUser: false
+      }
+
+    });
+
+
+    console.log(
+      `[SUMMARY COMMAND SUCCESS] ${company} | ${formatAmount(summary.totalAmount)}`
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      '[SUMMARY COMMAND EMBED ERROR]',
+      error
+    );
+
+
+    await safeReply(
+      message,
+      [
+        '📊 **Today\'s Summary | 今日業績**',
+        '',
+        `💹 **Today's Receipts | 今日入款：${Number(summary.count || 0)}筆**`,
+        '',
+        `💰 **Total | 總入款：${formatAmount(summary.totalAmount)}**`,
+        '',
+        `📅 **Business Date | 工作日：${summary.businessDate || '-'}**`
+      ].join('\n')
+    );
+
+  }
+
+}
 
 
 /******************************************************************
@@ -308,15 +472,6 @@ async function handleReceipt(
 
     /**************************************************************
      * STRICT ADD RESPONSE VALIDATION
-     *
-     * A random:
-     *
-     * {
-     *   ok: true,
-     *   system: "XINCHEN_RECEIPT"
-     * }
-     *
-     * is NOT accepted as an ADD success.
      **************************************************************/
 
     if (
@@ -386,11 +541,6 @@ async function handleReceipt(
         `[DUPLICATE MESSAGE ID] ${messageId}`
       );
 
-      /*
-       * Same Discord message already exists.
-       * Do not create another confirmation message.
-       */
-
       return;
     }
 
@@ -422,13 +572,10 @@ async function handleReceipt(
     }
 
 
-    /*
-     * ADD itself is valid and confirmed,
-     * but returned summary is unusable.
-     *
-     * We may safely request SUMMARY because
-     * SUMMARY is read-only.
-     */
+    /**************************************************************
+     * ADD confirmed but summary unusable.
+     * SUMMARY is read-only, so safe to retry.
+     **************************************************************/
 
     const fallbackSummary =
       await getSummaryWithRetry(
@@ -456,11 +603,6 @@ async function handleReceipt(
       return;
     }
 
-
-    /*
-     * ADD was definitely confirmed.
-     * Do NOT show System Error.
-     */
 
     await safeReply(
       message,
@@ -500,8 +642,6 @@ async function handleReceipt(
 
     /**************************************************************
      * CHECK FOUND
-     *
-     * This proves the original ADD reached Sheet.
      **************************************************************/
 
     if (
@@ -548,11 +688,6 @@ async function handleReceipt(
       }
 
 
-      /*
-       * CHECK proves receipt exists.
-       * Summary is optional.
-       */
-
       await safeReply(
         message,
         [
@@ -572,10 +707,7 @@ async function handleReceipt(
 
 
     /**************************************************************
-     * CHECK returned a valid NOT FOUND
-     *
-     * IMPORTANT:
-     * We still NEVER automatically ADD again.
+     * VALID CHECK BUT NOT FOUND
      **************************************************************/
 
     if (
@@ -611,7 +743,7 @@ async function handleReceipt(
 
 
     /**************************************************************
-     * CHECK itself unavailable / ambiguous
+     * CHECK unavailable / ambiguous
      **************************************************************/
 
     await safeReply(
@@ -712,7 +844,6 @@ function isValidAddResult(
  * CHECK WITH RETRY
  *
  * READ ONLY.
- * NEVER writes.
  ******************************************************************/
 
 async function checkReceiptWithRetry(
@@ -760,11 +891,6 @@ async function checkReceiptWithRetry(
         )
       ) {
 
-        /*
-         * If found = true:
-         * stop immediately.
-         */
-
         if (
           result.found === true
         ) {
@@ -776,13 +902,6 @@ async function checkReceiptWithRetry(
           return result;
         }
 
-
-        /*
-         * found:false may simply mean
-         * Google has not exposed the write yet.
-         *
-         * Retry before giving up.
-         */
 
         console.log(
           `[CHECK NOT FOUND] ${company} ${messageId} ${attempt}/${maxAttempts}`
@@ -820,13 +939,6 @@ async function checkReceiptWithRetry(
       attempt <
       maxAttempts
     ) {
-
-      /*
-       * Retry delays:
-       *
-       * after attempt 1 -> 1 second
-       * after attempt 2 -> 2 seconds
-       */
 
       const waitMs =
         attempt * 1000;
@@ -898,20 +1010,12 @@ function isValidCheckResult(
   }
 
 
-  /*
-   * NOT FOUND is already a valid CHECK response.
-   */
-
   if (
     result.found === false
   ) {
     return true;
   }
 
-
-  /*
-   * FOUND must contain the expected receipt data.
-   */
 
   if (
     !Number.isFinite(
@@ -1009,6 +1113,10 @@ async function getSummaryWithRetry(
       const waitMs =
         attempt * 1000;
 
+      console.log(
+        `[SUMMARY RETRY] ${company} in ${waitMs}ms`
+      );
+
       await sleep(
         waitMs
       );
@@ -1091,6 +1199,7 @@ function normalizeSummary(
 
 
   return {
+
     ok: true,
 
     company:
@@ -1111,6 +1220,7 @@ function normalizeSummary(
       Number(
         summary.totalAmount
       )
+
   };
 }
 
@@ -1163,11 +1273,6 @@ async function sendReceiptConfirmation(
       error
     );
 
-
-    /*
-     * Receipt is already verified.
-     * Never call this a System Error.
-     */
 
     await safeReply(
       message,
@@ -1247,7 +1352,7 @@ async function handleVoid(
 
 
     /*
-     * If user replies to Bot confirmation,
+     * Reply to Bot confirmation:
      * trace back to original +amount message.
      */
 
@@ -1286,7 +1391,7 @@ async function handleVoid(
 
 
     /**************************************************************
-     * VOID IS SENT ONCE ONLY.
+     * VOID IS SENT ONCE ONLY
      **************************************************************/
 
     let result;
@@ -1320,10 +1425,6 @@ async function handleVoid(
         error.message
       );
 
-
-      /*
-       * We cannot safely repeat VOID.
-       */
 
       await sendVoidPending(
         message
@@ -1366,8 +1467,6 @@ async function handleVoid(
 
     /**************************************************************
      * STRICT VOID RESPONSE VALIDATION
-     *
-     * Health response with only ok:true is rejected.
      **************************************************************/
 
     if (
@@ -1429,11 +1528,6 @@ async function handleVoid(
           company
         );
 
-
-      /*
-       * If VOID is confirmed but summary is missing,
-       * SUMMARY can safely be queried because it is read-only.
-       */
 
       if (!summary) {
 
@@ -1502,10 +1596,6 @@ async function handleVoid(
       return;
     }
 
-
-    /*
-     * Defensive fallback.
-     */
 
     await sendVoidPending(
       message
@@ -1633,7 +1723,7 @@ async function sendVoidPending(
 
 
 /******************************************************************
- * BUILD SUMMARY EMBED
+ * BUILD RECEIPT / VOID SUMMARY EMBED
  ******************************************************************/
 
 function buildSummaryEmbed({
@@ -1663,6 +1753,172 @@ function buildSummaryEmbed({
       ? summary.entries
       : [];
 
+
+  const {
+    receiptLines,
+    hiddenCount
+  } =
+    makeReceiptLines(
+      entries
+    );
+
+
+  let lines =
+    receiptLines;
+
+
+  if (
+    hiddenCount > 0
+  ) {
+
+    lines =
+      [
+        `… ${hiddenCount} earlier receipts not shown | 前面 ${hiddenCount} 筆未顯示`,
+        ...lines
+      ];
+
+  }
+
+
+  let description = '';
+
+
+  if (isVoid) {
+
+    description +=
+      `**Voided By | 撤銷人：** ${reporter || '-'}\n\n`;
+
+  } else {
+
+    description +=
+      `**Reporter | 報數人：** ${reporter || '-'}\n\n`;
+
+  }
+
+
+  description +=
+    `💹 **Today's Receipts | 今日入款（${Number(summary.count || 0)}筆）**\n`;
+
+
+  description +=
+    lines.join('\n');
+
+
+  description +=
+    `\n\n**Total | 總入款：${formatAmount(summary.totalAmount)}**`;
+
+
+  description +=
+    `\n**Business Date | 工作日：${summary.businessDate || '-'}**`;
+
+
+  return new EmbedBuilder()
+
+    .setTitle(title)
+
+    .setDescription(
+      description
+    )
+
+    .setFooter({
+      text:
+        `${company} • XINCHEN RECEIPT`
+    })
+
+    .setTimestamp();
+
+}
+
+
+/******************************************************************
+ * BUILD +0 TODAY SUMMARY EMBED
+ ******************************************************************/
+
+function buildTodaySummaryEmbed({
+  company,
+  summary
+}) {
+
+  const entries =
+    Array.isArray(
+      summary.entries
+    )
+      ? summary.entries
+      : [];
+
+
+  const {
+    receiptLines,
+    hiddenCount
+  } =
+    makeReceiptLines(
+      entries
+    );
+
+
+  let lines =
+    receiptLines;
+
+
+  if (
+    hiddenCount > 0
+  ) {
+
+    lines =
+      [
+        `… ${hiddenCount} earlier receipts not shown | 前面 ${hiddenCount} 筆未顯示`,
+        ...lines
+      ];
+
+  }
+
+
+  let description = '';
+
+
+  description +=
+    `💹 **Today's Receipts | 今日入款（${Number(summary.count || 0)}筆）**\n`;
+
+
+  description +=
+    lines.join('\n');
+
+
+  description +=
+    `\n\n💰 **Total | 總入款：${formatAmount(summary.totalAmount)}**`;
+
+
+  description +=
+    `\n📅 **Business Date | 工作日：${summary.businessDate || '-'}**`;
+
+
+  return new EmbedBuilder()
+
+    .setTitle(
+      '📊 Today\'s Summary | 今日業績'
+    )
+
+    .setDescription(
+      description
+    )
+
+    .setFooter({
+      text:
+        `${company} • XINCHEN RECEIPT`
+    })
+
+    .setTimestamp();
+
+}
+
+
+/******************************************************************
+ * MAKE RECEIPT LINES
+ ******************************************************************/
+
+function makeReceiptLines(
+  entries
+) {
 
   let visibleEntries =
     entries;
@@ -1731,63 +1987,10 @@ function buildSummaryEmbed({
   }
 
 
-  if (
-    hiddenCount > 0
-  ) {
-
-    receiptLines.unshift(
-      `… ${hiddenCount} earlier receipts not shown | 前面 ${hiddenCount} 筆未顯示`
-    );
-
-  }
-
-
-  let description = '';
-
-
-  if (isVoid) {
-
-    description +=
-      `**Voided By | 撤銷人：** ${reporter || '-'}\n\n`;
-
-  } else {
-
-    description +=
-      `**Reporter | 報數人：** ${reporter || '-'}\n\n`;
-
-  }
-
-
-  description +=
-    `💹 **Today's Receipts | 今日入款（${Number(summary.count || 0)}筆）**\n`;
-
-
-  description +=
-    receiptLines.join('\n');
-
-
-  description +=
-    `\n\n**Total | 總入款：${formatAmount(summary.totalAmount)}**`;
-
-
-  description +=
-    `\n**Business Date | 工作日：${summary.businessDate || '-'}**`;
-
-
-  return new EmbedBuilder()
-
-    .setTitle(title)
-
-    .setDescription(
-      description
-    )
-
-    .setFooter({
-      text:
-        `${company} • XINCHEN RECEIPT`
-    })
-
-    .setTimestamp();
+  return {
+    receiptLines,
+    hiddenCount
+  };
 
 }
 
@@ -1922,9 +2125,7 @@ async function callAppsScript(
       raw.trim();
 
 
-    if (
-      !trimmed
-    ) {
+    if (!trimmed) {
 
       throw new Error(
         'Apps Script returned empty response'
@@ -2032,18 +2233,14 @@ async function callAppsScript(
 /******************************************************************
  * PARSE AMOUNT
  *
- * REQUIRED:
+ * +0 is handled BEFORE this function.
+ *
+ * Normal ADD:
  *
  * +1
  * +1.23
  * +100
  * +1,000.50
- *
- * Plain:
- *
- * 100
- *
- * is ignored.
  ******************************************************************/
 
 function parseAmount(
@@ -2107,6 +2304,11 @@ function parseAmount(
       normalized
     );
 
+
+  /*
+   * Zero is NOT accepted here.
+   * +0 was already handled as Summary.
+   */
 
   if (
     !Number.isFinite(amount) ||
