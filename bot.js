@@ -1,13 +1,18 @@
 /******************************************************************
- * XINCHEN RECEIPT BOT V1.3 STABLE VERIFY
+ * XINCHEN RECEIPT BOT V2.0 STABLE
  *
- * IMPORTANT:
- * - Apps Script 不需要修改
- * - ADD 永远只发送一次
- * - ADD timeout / 404 后绝对不会重新 ADD
- * - 使用 SUMMARY + MessageID 确认是否已经成功入账
- * - SUMMARY 自动重试
- * - SG / IRL 完全独立
+ * INPUT:
+ * +11.23
+ *
+ * CORE:
+ * - ADD only ONCE
+ * - ADD success -> use returned summary
+ * - ADD timeout / 404 / wrong response -> CHECK MessageID
+ * - CHECK is READ ONLY
+ * - NEVER retry ADD automatically
+ * - Strict response validation
+ * - VOID supported
+ * - SG / IRL completely separate
  ******************************************************************/
 
 const http = require('http');
@@ -43,7 +48,7 @@ if (!APPS_SCRIPT_URL) {
  ******************************************************************/
 
 const VERSION =
-  'XINCHEN RECEIPT BOT V1.3 STABLE VERIFY';
+  'XINCHEN RECEIPT BOT V2.0 STABLE';
 
 const CHANNELS = {
   '1536956205803503686': 'XINCHEN-SG',
@@ -59,6 +64,8 @@ const VOID_WORDS =
   ]);
 
 const MAX_SUMMARY_ENTRIES = 25;
+
+const CHECK_ATTEMPTS = 3;
 
 
 /******************************************************************
@@ -244,7 +251,7 @@ async function handleReceipt(
     getDisplayName(message);
 
   const messageId =
-    message.id;
+    String(message.id);
 
   console.log(
     '[RECEIPT]',
@@ -259,11 +266,18 @@ async function handleReceipt(
 
   /****************************************************************
    * STEP 1
-   * ADD 只发送一次
+   *
+   * ADD EXACTLY ONCE.
+   *
+   * Never retry this request automatically.
    ****************************************************************/
 
   let addResult = null;
-  let addResponseFailed = false;
+
+  let addConfirmed = false;
+
+  let needsCheck = false;
+
 
   try {
 
@@ -285,23 +299,61 @@ async function handleReceipt(
 
       });
 
+
     console.log(
       '[ADD RESULT]',
       addResult
     );
 
+
+    /**************************************************************
+     * STRICT ADD RESPONSE VALIDATION
+     *
+     * A random:
+     *
+     * {
+     *   ok: true,
+     *   system: "XINCHEN_RECEIPT"
+     * }
+     *
+     * is NOT accepted as an ADD success.
+     **************************************************************/
+
+    if (
+      isValidAddResult(
+        addResult,
+        company,
+        messageId
+      )
+    ) {
+
+      addConfirmed = true;
+
+    } else {
+
+      console.error(
+        '[ADD RESPONSE INVALID / AMBIGUOUS]',
+        {
+          company,
+          messageId,
+          addResult
+        }
+      );
+
+      needsCheck = true;
+
+    }
+
+
   } catch (error) {
 
     /*
-     * 非常重要：
+     * HTTP failure does NOT mean ADD failed.
      *
-     * 这里只代表 HTTP response 失败。
-     * 不代表 Sheet 没写入。
+     * Sheet may already contain the receipt.
      *
-     * 绝对不重新 ADD。
+     * NEVER ADD again.
      */
-
-    addResponseFailed = true;
 
     console.error(
       '[ADD RESPONSE FAILED]',
@@ -310,31 +362,117 @@ async function handleReceipt(
       error.message
     );
 
+    needsCheck = true;
+
   }
 
 
   /****************************************************************
    * STEP 2
-   * ADD 正常明确失败
+   * NORMAL CONFIRMED ADD
    ****************************************************************/
 
-  if (
-    !addResponseFailed &&
-    (
-      !addResult ||
-      !addResult.ok
-    )
-  ) {
+  if (addConfirmed) {
+
+    /**************************************************************
+     * DUPLICATE SAME MESSAGE ID
+     **************************************************************/
+
+    if (
+      addResult.duplicate === true
+    ) {
+
+      console.log(
+        `[DUPLICATE MESSAGE ID] ${messageId}`
+      );
+
+      /*
+       * Same Discord message already exists.
+       * Do not create another confirmation message.
+       */
+
+      return;
+    }
+
+
+    const summary =
+      normalizeSummary(
+        addResult.summary,
+        company
+      );
+
+
+    if (summary) {
+
+      await sendReceiptConfirmation(
+        message,
+        company,
+        Number(
+          addResult.amount
+        ),
+        reporter,
+        summary
+      );
+
+      console.log(
+        `[RECEIPT SUCCESS] ${company} ${formatAmount(addResult.amount)}`
+      );
+
+      return;
+    }
+
+
+    /*
+     * ADD itself is valid and confirmed,
+     * but returned summary is unusable.
+     *
+     * We may safely request SUMMARY because
+     * SUMMARY is read-only.
+     */
+
+    const fallbackSummary =
+      await getSummaryWithRetry(
+        company,
+        3
+      );
+
+
+    if (fallbackSummary) {
+
+      await sendReceiptConfirmation(
+        message,
+        company,
+        Number(
+          addResult.amount
+        ),
+        reporter,
+        fallbackSummary
+      );
+
+      console.log(
+        `[RECEIPT SUCCESS + SUMMARY RECOVERY] ${company} ${messageId}`
+      );
+
+      return;
+    }
+
+
+    /*
+     * ADD was definitely confirmed.
+     * Do NOT show System Error.
+     */
 
     await safeReply(
       message,
       [
-        '⚠️ **Receipt Failed | 入款記錄失敗**',
+        `✅ **Receipt Confirmed | 已確認入款：${formatAmount(addResult.amount)}**`,
         '',
-        '系統明確回傳入款失敗。',
-        'The system returned an unsuccessful receipt result.',
+        `👤 **Reporter | 報數人：** ${reporter}`,
         '',
-        '請管理員檢查記錄。'
+        '入款已成功記錄。',
+        'Receipt has been recorded successfully.',
+        '',
+        '⚠️ 今日 Total 暫時無法載入。'
       ].join('\n')
     );
 
@@ -344,145 +482,63 @@ async function handleReceipt(
 
   /****************************************************************
    * STEP 3
-   * DUPLICATE
-   ****************************************************************/
-
-  if (
-    !addResponseFailed &&
-    addResult &&
-    addResult.duplicate
-  ) {
-
-    console.log(
-      `[DUPLICATE] ${messageId}`
-    );
-
-    return;
-  }
-
-
-  /****************************************************************
-   * STEP 4
-   * 查 SUMMARY
+   * ADD RESPONSE FAILED / INVALID
    *
-   * 无论 ADD 正常还是 response timeout，
-   * 都通过 SUMMARY 得到最新 Total。
+   * CHECK ONLY.
+   * NEVER ADD AGAIN.
    ****************************************************************/
 
-  const summary =
-    await getSummaryWithRetry(
-      company,
-      3
-    );
+  if (needsCheck) {
+
+    const checkResult =
+      await checkReceiptWithRetry(
+        company,
+        messageId,
+        CHECK_ATTEMPTS
+      );
 
 
-  /****************************************************************
-   * CASE A
-   * ADD response 正常成功
-   ****************************************************************/
-
-  if (
-    !addResponseFailed &&
-    addResult &&
-    addResult.ok
-  ) {
+    /**************************************************************
+     * CHECK FOUND
+     *
+     * This proves the original ADD reached Sheet.
+     **************************************************************/
 
     if (
-      summary &&
-      summary.ok
+      checkResult &&
+      checkResult.found === true
     ) {
 
-      await sendReceiptConfirmation(
-        message,
-        company,
-        amount,
-        reporter,
-        summary
-      );
+      const summary =
+        normalizeSummary(
+          checkResult.summary,
+          company
+        );
+
 
       console.log(
-        `[RECEIPT SUCCESS] ${company} ${formatAmount(amount)}`
+        '[ADD VERIFIED BY CHECK]',
+        {
+          company,
+          messageId,
+          amount:
+            checkResult.amount
+        }
       );
 
-      return;
-    }
 
-
-    /*
-     * ADD 已明确成功。
-     * Summary 即使失败也不能显示 System Error。
-     */
-
-    await safeReply(
-      message,
-      [
-        `✅ **Receipt Confirmed | 已確認入款：${formatAmount(amount)}**`,
-        '',
-        `👤 **Reporter | 報數人：** ${reporter}`,
-        '',
-        '入款已成功記錄。',
-        'Receipt has been recorded successfully.',
-        '',
-        '⚠️ 今日統計暫時無法載入。'
-      ].join('\n')
-    );
-
-    return;
-  }
-
-
-  /****************************************************************
-   * CASE B
-   * ADD response timeout / 404
-   *
-   * 用 SUMMARY 里的 MessageID 验证。
-   ****************************************************************/
-
-  if (
-    addResponseFailed
-  ) {
-
-    if (
-      summary &&
-      summary.ok
-    ) {
-
-      const found =
-        findMessageInSummary(
-          summary,
-          messageId
-        );
-
-
-      /************************************************************
-       * 找到了！
-       *
-       * 证明刚才 ADD 虽然 HTTP response 失败，
-       * 但 Sheet 实际已经成功写入。
-       ************************************************************/
-
-      if (found) {
-
-        console.log(
-          '[ADD VERIFIED BY SUMMARY]',
-          {
-            company,
-            messageId,
-            amount: found.amount
-          }
-        );
-
+      if (summary) {
 
         await sendReceiptConfirmation(
           message,
           company,
           Number(
-            found.amount || amount
+            checkResult.amount
           ),
-          reporter,
+          checkResult.reporter ||
+            reporter,
           summary
         );
-
 
         console.log(
           `[RECEIPT RECOVERED] ${company} ${messageId}`
@@ -492,30 +548,22 @@ async function handleReceipt(
       }
 
 
-      /************************************************************
-       * SUMMARY 成功，但找不到这个 MessageID
-       *
-       * 这时候不能重新 ADD。
-       ************************************************************/
-
-      console.error(
-        '[ADD NOT FOUND IN SUMMARY]',
-        company,
-        messageId
-      );
-
+      /*
+       * CHECK proves receipt exists.
+       * Summary is optional.
+       */
 
       await safeReply(
         message,
         [
-          '⚠️ **Receipt Not Confirmed | 入款未確認**',
+          `✅ **Receipt Confirmed | 已確認入款：${formatAmount(checkResult.amount || amount)}**`,
           '',
-          `Amount | 金額：**${formatAmount(amount)}**`,
+          `👤 **Reporter | 報數人：** ${checkResult.reporter || reporter}`,
           '',
-          '系統沒有在今日記錄中找到這筆 Message ID。',
-          'The receipt was not found in today\'s records.',
+          '系統已確認這筆入款存在。',
+          'Receipt has been verified successfully.',
           '',
-          '請先讓管理員檢查 Sheet，**不要立即重新報數**。'
+          '⚠️ 今日 Total 暫時無法載入。'
         ].join('\n')
       );
 
@@ -524,10 +572,46 @@ async function handleReceipt(
 
 
     /**************************************************************
-     * ADD response 失败
-     * SUMMARY 也完全查不到
+     * CHECK returned a valid NOT FOUND
      *
-     * 状态未知。
+     * IMPORTANT:
+     * We still NEVER automatically ADD again.
+     **************************************************************/
+
+    if (
+      checkResult &&
+      checkResult.found === false
+    ) {
+
+      console.error(
+        '[ADD NOT FOUND AFTER CHECK]',
+        company,
+        messageId
+      );
+
+      await safeReply(
+        message,
+        [
+          '⏳ **Receipt Pending Verification | 入款狀態待確認**',
+          '',
+          `Amount | 金額：**${formatAmount(amount)}**`,
+          '',
+          '目前尚未確認這筆記錄。',
+          'The receipt has not been confirmed yet.',
+          '',
+          '**請勿重新報數。**',
+          '**Please do NOT repost the amount.**',
+          '',
+          '如有需要，管理員可檢查 Sheet。'
+        ].join('\n')
+      );
+
+      return;
+    }
+
+
+    /**************************************************************
+     * CHECK itself unavailable / ambiguous
      **************************************************************/
 
     await safeReply(
@@ -537,69 +621,497 @@ async function handleReceipt(
         '',
         `Amount | 金額：**${formatAmount(amount)}**`,
         '',
-        'Google 暫時沒有回傳可確認的結果。',
+        '系統暫時無法完成自動確認。',
+        'Automatic verification is temporarily unavailable.',
         '',
         '**請勿重新報數。**',
-        'Please do NOT repost this amount.',
+        '**Please do NOT repost the amount.**',
         '',
-        '請管理員直接檢查 Sheet。'
+        '請管理員檢查 Sheet。'
       ].join('\n')
     );
 
-    return;
   }
 
 }
 
 
 /******************************************************************
- * FIND MESSAGE IN SUMMARY
+ * STRICT ADD RESULT VALIDATION
  ******************************************************************/
 
-function findMessageInSummary(
-  summary,
+function isValidAddResult(
+  result,
+  company,
   messageId
 ) {
 
   if (
-    !summary ||
-    !Array.isArray(
-      summary.entries
-    )
+    !result ||
+    typeof result !== 'object'
   ) {
-
-    return null;
+    return false;
   }
 
+  if (
+    result.ok !== true
+  ) {
+    return false;
+  }
 
-  const target =
+  if (
+    result.company !== company
+  ) {
+    return false;
+  }
+
+  if (
     String(
-      messageId
-    ).trim();
+      result.messageId || ''
+    ) !==
+    String(messageId)
+  ) {
+    return false;
+  }
 
+  if (
+    typeof result.duplicate !==
+    'boolean'
+  ) {
+    return false;
+  }
+
+  if (
+    result.found !== true
+  ) {
+    return false;
+  }
+
+  if (
+    typeof result.status !==
+    'string'
+  ) {
+    return false;
+  }
+
+  if (
+    !Number.isFinite(
+      Number(
+        result.amount
+      )
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+
+/******************************************************************
+ * CHECK WITH RETRY
+ *
+ * READ ONLY.
+ * NEVER writes.
+ ******************************************************************/
+
+async function checkReceiptWithRetry(
+  company,
+  messageId,
+  maxAttempts = 3
+) {
 
   for (
-    const entry of
-    summary.entries
+    let attempt = 1;
+    attempt <= maxAttempts;
+    attempt++
   ) {
 
-    const id =
-      String(
-        entry.messageId || ''
-      ).trim();
+    try {
+
+      console.log(
+        `[CHECK ATTEMPT] ${company} ${messageId} ${attempt}/${maxAttempts}`
+      );
+
+
+      const result =
+        await callAppsScript({
+
+          action: 'CHECK',
+
+          company,
+
+          messageId
+
+        });
+
+
+      console.log(
+        '[CHECK RESULT]',
+        result
+      );
+
+
+      if (
+        isValidCheckResult(
+          result,
+          company,
+          messageId
+        )
+      ) {
+
+        /*
+         * If found = true:
+         * stop immediately.
+         */
+
+        if (
+          result.found === true
+        ) {
+
+          console.log(
+            `[CHECK FOUND] ${company} ${messageId}`
+          );
+
+          return result;
+        }
+
+
+        /*
+         * found:false may simply mean
+         * Google has not exposed the write yet.
+         *
+         * Retry before giving up.
+         */
+
+        console.log(
+          `[CHECK NOT FOUND] ${company} ${messageId} ${attempt}/${maxAttempts}`
+        );
+
+
+        if (
+          attempt ===
+          maxAttempts
+        ) {
+
+          return result;
+        }
+
+      } else {
+
+        console.error(
+          `[CHECK INVALID RESPONSE] ${company} ${attempt}/${maxAttempts}`,
+          result
+        );
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        `[CHECK FAILED] ${company} ${attempt}/${maxAttempts}`,
+        error.message
+      );
+
+    }
 
 
     if (
-      id === target
+      attempt <
+      maxAttempts
     ) {
 
-      return entry;
+      /*
+       * Retry delays:
+       *
+       * after attempt 1 -> 1 second
+       * after attempt 2 -> 2 seconds
+       */
+
+      const waitMs =
+        attempt * 1000;
+
+      console.log(
+        `[CHECK RETRY] ${company} in ${waitMs}ms`
+      );
+
+      await sleep(
+        waitMs
+      );
+
     }
 
   }
 
 
+  console.error(
+    `[CHECK GIVE UP] ${company} ${messageId}`
+  );
+
   return null;
+}
+
+
+/******************************************************************
+ * STRICT CHECK VALIDATION
+ ******************************************************************/
+
+function isValidCheckResult(
+  result,
+  company,
+  messageId
+) {
+
+  if (
+    !result ||
+    typeof result !== 'object'
+  ) {
+    return false;
+  }
+
+  if (
+    result.ok !== true
+  ) {
+    return false;
+  }
+
+  if (
+    result.company !== company
+  ) {
+    return false;
+  }
+
+  if (
+    String(
+      result.messageId || ''
+    ) !==
+    String(messageId)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof result.found !==
+    'boolean'
+  ) {
+    return false;
+  }
+
+
+  /*
+   * NOT FOUND is already a valid CHECK response.
+   */
+
+  if (
+    result.found === false
+  ) {
+    return true;
+  }
+
+
+  /*
+   * FOUND must contain the expected receipt data.
+   */
+
+  if (
+    !Number.isFinite(
+      Number(
+        result.amount
+      )
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof result.status !==
+    'string'
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+
+/******************************************************************
+ * SUMMARY WITH RETRY
+ *
+ * READ ONLY.
+ ******************************************************************/
+
+async function getSummaryWithRetry(
+  company,
+  maxAttempts = 3
+) {
+
+  for (
+    let attempt = 1;
+    attempt <= maxAttempts;
+    attempt++
+  ) {
+
+    try {
+
+      console.log(
+        `[SUMMARY ATTEMPT] ${company} ${attempt}/${maxAttempts}`
+      );
+
+
+      const result =
+        await callAppsScript({
+
+          action: 'SUMMARY',
+
+          company
+
+        });
+
+
+      const summary =
+        normalizeSummary(
+          result,
+          company
+        );
+
+
+      if (summary) {
+
+        console.log(
+          `[SUMMARY SUCCESS] ${company} ${attempt}/${maxAttempts}`
+        );
+
+        return summary;
+      }
+
+
+      console.error(
+        `[SUMMARY INVALID] ${company} ${attempt}/${maxAttempts}`,
+        result
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        `[SUMMARY FAILED] ${company} ${attempt}/${maxAttempts}`,
+        error.message
+      );
+
+    }
+
+
+    if (
+      attempt <
+      maxAttempts
+    ) {
+
+      const waitMs =
+        attempt * 1000;
+
+      await sleep(
+        waitMs
+      );
+
+    }
+
+  }
+
+
+  console.error(
+    `[SUMMARY GIVE UP] ${company}`
+  );
+
+  return null;
+}
+
+
+/******************************************************************
+ * STRICT SUMMARY VALIDATION
+ ******************************************************************/
+
+function normalizeSummary(
+  summary,
+  company
+) {
+
+  if (
+    !summary ||
+    typeof summary !== 'object'
+  ) {
+    return null;
+  }
+
+  if (
+    summary.ok !== true
+  ) {
+    return null;
+  }
+
+  if (
+    summary.company !== company
+  ) {
+    return null;
+  }
+
+  if (
+    typeof summary.businessDate !==
+    'string'
+  ) {
+    return null;
+  }
+
+  if (
+    !Array.isArray(
+      summary.entries
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(
+      Number(
+        summary.totalAmount
+      )
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(
+      Number(
+        summary.count
+      )
+    )
+  ) {
+    return null;
+  }
+
+
+  return {
+    ok: true,
+
+    company:
+      summary.company,
+
+    businessDate:
+      summary.businessDate,
+
+    count:
+      Number(
+        summary.count
+      ),
+
+    entries:
+      summary.entries,
+
+    totalAmount:
+      Number(
+        summary.totalAmount
+      )
+  };
 }
 
 
@@ -643,6 +1155,7 @@ async function sendReceiptConfirmation(
 
     });
 
+
   } catch (error) {
 
     console.error(
@@ -652,8 +1165,8 @@ async function sendReceiptConfirmation(
 
 
     /*
-     * 入账已经确认。
-     * Discord Embed 出错也不能显示 System Error。
+     * Receipt is already verified.
+     * Never call this a System Error.
      */
 
     await safeReply(
@@ -671,107 +1184,6 @@ async function sendReceiptConfirmation(
 
   }
 
-}
-
-
-/******************************************************************
- * SUMMARY WITH RETRY
- *
- * 这里只 READ。
- * 不会 ADD。
- ******************************************************************/
-
-async function getSummaryWithRetry(
-  company,
-  maxAttempts = 3
-) {
-
-  for (
-    let attempt = 1;
-    attempt <= maxAttempts;
-    attempt++
-  ) {
-
-    try {
-
-      console.log(
-        `[SUMMARY ATTEMPT] ${company} ${attempt}/${maxAttempts}`
-      );
-
-
-      const result =
-        await callAppsScript({
-
-          action: 'SUMMARY',
-
-          company
-
-        });
-
-
-      if (
-        result &&
-        result.ok
-      ) {
-
-        console.log(
-          `[SUMMARY SUCCESS] ${company} ${attempt}/${maxAttempts}`
-        );
-
-        return result;
-      }
-
-
-      console.error(
-        `[SUMMARY INVALID] ${company} ${attempt}/${maxAttempts}`,
-        result
-      );
-
-
-    } catch (error) {
-
-      console.error(
-        `[SUMMARY FAILED] ${company} ${attempt}/${maxAttempts}`,
-        error.message
-      );
-
-    }
-
-
-    if (
-      attempt <
-      maxAttempts
-    ) {
-
-      /*
-       * 1st retry: 1 second
-       * 2nd retry: 2 seconds
-       */
-
-      const waitMs =
-        attempt * 1000;
-
-
-      console.log(
-        `[SUMMARY RETRY] ${company} in ${waitMs}ms`
-      );
-
-
-      await sleep(
-        waitMs
-      );
-
-    }
-
-  }
-
-
-  console.error(
-    `[SUMMARY GIVE UP] ${company}`
-  );
-
-
-  return null;
 }
 
 
@@ -835,8 +1247,8 @@ async function handleVoid(
 
 
     /*
-     * 如果 reply 的是 Bot confirmation，
-     * 追溯到原始报数 MessageID。
+     * If user replies to Bot confirmation,
+     * trace back to original +amount message.
      */
 
     if (
@@ -873,22 +1285,52 @@ async function handleVoid(
     );
 
 
-    const result =
-      await callAppsScript({
+    /**************************************************************
+     * VOID IS SENT ONCE ONLY.
+     **************************************************************/
 
-        action: 'VOID',
+    let result;
 
+
+    try {
+
+      result =
+        await callAppsScript({
+
+          action: 'VOID',
+
+          company,
+
+          targetMessageId:
+            originalMessageId,
+
+          voidMessageId:
+            message.id,
+
+          voidedBy
+
+        });
+
+    } catch (error) {
+
+      console.error(
+        '[VOID RESPONSE FAILED]',
         company,
+        originalMessageId,
+        error.message
+      );
 
-        targetMessageId:
-          originalMessageId,
 
-        voidMessageId:
-          message.id,
+      /*
+       * We cannot safely repeat VOID.
+       */
 
-        voidedBy
+      await sendVoidPending(
+        message
+      );
 
-      });
+      return;
+    }
 
 
     console.log(
@@ -897,47 +1339,64 @@ async function handleVoid(
     );
 
 
+    /**************************************************************
+     * EXPLICIT NOT FOUND
+     **************************************************************/
+
     if (
-      !result ||
-      !result.ok
+      result &&
+      result.ok === false &&
+      result.error ===
+        'NOT_FOUND'
     ) {
 
-      if (
-        result &&
-        result.error ===
-          'NOT_FOUND'
-      ) {
-
-        await safeReply(
-          message,
-          [
-            '❌ **Void Failed | 撤銷失敗**',
-            '',
-            '找不到這筆入款記錄。',
-            'Receipt record not found.'
-          ].join('\n')
-        );
-
-      } else {
-
-        await safeReply(
-          message,
-          [
-            '⚠️ **Void Failed | 撤銷失敗**',
-            '',
-            '系統暫時無法處理撤銷。',
-            'The system could not process this void request.'
-          ].join('\n')
-        );
-
-      }
+      await safeReply(
+        message,
+        [
+          '❌ **Void Failed | 撤銷失敗**',
+          '',
+          '找不到這筆入款記錄。',
+          'Receipt record not found.'
+        ].join('\n')
+      );
 
       return;
     }
 
 
+    /**************************************************************
+     * STRICT VOID RESPONSE VALIDATION
+     *
+     * Health response with only ok:true is rejected.
+     **************************************************************/
+
     if (
-      result.alreadyVoided
+      !isValidVoidResult(
+        result,
+        company,
+        originalMessageId
+      )
+    ) {
+
+      console.error(
+        '[VOID RESPONSE INVALID / AMBIGUOUS]',
+        result
+      );
+
+      await sendVoidPending(
+        message
+      );
+
+      return;
+    }
+
+
+    /**************************************************************
+     * ALREADY VOIDED
+     **************************************************************/
+
+    if (
+      result.alreadyVoided === true
     ) {
 
       await safeReply(
@@ -957,70 +1416,99 @@ async function handleVoid(
 
 
     /**************************************************************
-     * VOID 成功以后只查 SUMMARY
+     * VOID SUCCESS
      **************************************************************/
 
-    const summary =
-      await getSummaryWithRetry(
-        company,
-        3
-      );
-
-
     if (
-      !summary ||
-      !summary.ok
+      result.voided === true
     ) {
 
-      await safeReply(
-        message,
-        [
-          `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
-          '',
-          '撤銷已成功記錄。',
-          'Void recorded successfully.',
-          '',
-          '⚠️ 今日統計暫時無法顯示。'
-        ].join('\n')
+      let summary =
+        normalizeSummary(
+          result.summary,
+          company
+        );
+
+
+      /*
+       * If VOID is confirmed but summary is missing,
+       * SUMMARY can safely be queried because it is read-only.
+       */
+
+      if (!summary) {
+
+        summary =
+          await getSummaryWithRetry(
+            company,
+            3
+          );
+
+      }
+
+
+      if (!summary) {
+
+        await safeReply(
+          message,
+          [
+            `♻️ **Voided Successfully | 已撤銷：${formatAmount(result.amount)}**`,
+            '',
+            '撤銷已成功記錄。',
+            'Void recorded successfully.',
+            '',
+            '⚠️ 今日 Total 暫時無法載入。'
+          ].join('\n')
+        );
+
+        return;
+      }
+
+
+      const embed =
+        buildSummaryEmbed({
+
+          company,
+
+          amount:
+            Number(
+              result.amount || 0
+            ),
+
+          reporter:
+            voidedBy,
+
+          summary,
+
+          titleType: 'VOID'
+
+        });
+
+
+      await message.reply({
+
+        embeds: [embed],
+
+        allowedMentions: {
+          repliedUser: false
+        }
+
+      });
+
+
+      console.log(
+        `[VOID SUCCESS] ${company} ${formatAmount(result.amount)}`
       );
 
       return;
     }
 
 
-    const embed =
-      buildSummaryEmbed({
+    /*
+     * Defensive fallback.
+     */
 
-        company,
-
-        amount:
-          Number(
-            result.amount || 0
-          ),
-
-        reporter:
-          voidedBy,
-
-        summary,
-
-        titleType: 'VOID'
-
-      });
-
-
-    await message.reply({
-
-      embeds: [embed],
-
-      allowedMentions: {
-        repliedUser: false
-      }
-
-    });
-
-
-    console.log(
-      `[VOID SUCCESS] ${company} ${formatAmount(result.amount)}`
+    await sendVoidPending(
+      message
     );
 
 
@@ -1031,27 +1519,115 @@ async function handleVoid(
       error
     );
 
-
-    /*
-     * VOID HTTP response 异常时，
-     * 不叫员工重复 void。
-     */
-
-    await safeReply(
-      message,
-      [
-        '⏳ **Void Pending Verification | 撤銷狀態待確認**',
-        '',
-        '目前無法確認 Google 回傳結果。',
-        '',
-        '**請勿重複撤銷。**',
-        'Please do NOT repeat the void request.',
-        '',
-        '請管理員檢查 Sheet 的 Status。'
-      ].join('\n')
+    await sendVoidPending(
+      message
     );
 
   }
+
+}
+
+
+/******************************************************************
+ * STRICT VOID VALIDATION
+ ******************************************************************/
+
+function isValidVoidResult(
+  result,
+  company,
+  messageId
+) {
+
+  if (
+    !result ||
+    typeof result !== 'object'
+  ) {
+    return false;
+  }
+
+  if (
+    result.ok !== true
+  ) {
+    return false;
+  }
+
+  if (
+    result.company !== company
+  ) {
+    return false;
+  }
+
+  if (
+    String(
+      result.messageId || ''
+    ) !==
+    String(messageId)
+  ) {
+    return false;
+  }
+
+
+  const hasVoided =
+    typeof result.voided ===
+    'boolean';
+
+  const hasAlreadyVoided =
+    typeof result.alreadyVoided ===
+    'boolean';
+
+
+  if (
+    !hasVoided ||
+    !hasAlreadyVoided
+  ) {
+    return false;
+  }
+
+
+  if (
+    result.voided !== true &&
+    result.alreadyVoided !== true
+  ) {
+    return false;
+  }
+
+
+  if (
+    !Number.isFinite(
+      Number(
+        result.amount
+      )
+    )
+  ) {
+    return false;
+  }
+
+
+  return true;
+}
+
+
+/******************************************************************
+ * VOID PENDING
+ ******************************************************************/
+
+async function sendVoidPending(
+  message
+) {
+
+  await safeReply(
+    message,
+    [
+      '⏳ **Void Pending Verification | 撤銷狀態待確認**',
+      '',
+      '目前無法安全確認 Google 回傳結果。',
+      '',
+      '**請勿重複撤銷。**',
+      'Please do NOT repeat the void request.',
+      '',
+      '請管理員檢查 Sheet 的 Status。'
+    ].join('\n')
+  );
 
 }
 
@@ -1328,7 +1904,7 @@ async function callAppsScript(
       '[APPS RAW RESPONSE]',
       raw.substring(
         0,
-        1500
+        2000
       )
     );
 
@@ -1344,6 +1920,17 @@ async function callAppsScript(
 
     const trimmed =
       raw.trim();
+
+
+    if (
+      !trimmed
+    ) {
+
+      throw new Error(
+        'Apps Script returned empty response'
+      );
+
+    }
 
 
     if (
@@ -1433,7 +2020,9 @@ async function callAppsScript(
 
   } finally {
 
-    clearTimeout(timeout);
+    clearTimeout(
+      timeout
+    );
 
   }
 
@@ -1442,6 +2031,19 @@ async function callAppsScript(
 
 /******************************************************************
  * PARSE AMOUNT
+ *
+ * REQUIRED:
+ *
+ * +1
+ * +1.23
+ * +100
+ * +1,000.50
+ *
+ * Plain:
+ *
+ * 100
+ *
+ * is ignored.
  ******************************************************************/
 
 function parseAmount(
@@ -1455,11 +2057,11 @@ function parseAmount(
     return null;
   }
 
+
   const text =
     content.trim();
 
 
-  // 必须以 + 开头
   if (
     !text.startsWith('+')
   ) {
@@ -1467,12 +2069,10 @@ function parseAmount(
   }
 
 
-  // 去掉最前面的 +
   const amountText =
     text.slice(1).trim();
 
 
-  // 不允许空内容 / 多行
   if (
     !amountText ||
     amountText.includes('\n') ||
@@ -1482,12 +2082,6 @@ function parseAmount(
   }
 
 
-  // 支持：
-  // +1
-  // +1.23
-  // +100
-  // +1000.50
-  // +1,000.50
   const amountRegex =
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
 
@@ -1534,6 +2128,40 @@ function parseAmount(
     Math.round(
       amount * 100
     ) / 100
+  );
+
+}
+
+
+/******************************************************************
+ * FORMAT AMOUNT
+ ******************************************************************/
+
+function formatAmount(
+  value
+) {
+
+  const number =
+    Number(
+      value || 0
+    );
+
+
+  if (
+    !Number.isFinite(number)
+  ) {
+
+    return '0.00';
+
+  }
+
+
+  return number.toLocaleString(
+    'en-MY',
+    {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }
   );
 
 }
